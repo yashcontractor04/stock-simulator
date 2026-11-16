@@ -92,12 +92,12 @@ paths:
                 risk_levels:
                   - id: low
                     target_volatility: 0.08
-                    max_weight_per_instrument: 0.25
+                    max_weight_per_instrument: 0.05
                     max_weight_per_sector: 0.30
                     core_share: 0.80
                   - id: medium
                     target_volatility: 0.14
-                    max_weight_per_instrument: 0.15
+                    max_weight_per_instrument: 0.10
                     max_weight_per_sector: 0.35
                     core_share: 0.50
                   - id: high
@@ -1003,7 +1003,7 @@ components:
             properties:
               id: { $ref: "#/components/schemas/RiskLevel" }
               target_volatility: { type: number, description: Yearly volatility the portfolio aims for, as a fraction. }
-              max_weight_per_instrument: { type: number }
+              max_weight_per_instrument: { type: number, description: Largest share of the portfolio one picked stock may have. Core ETFs are not capped. }
               max_weight_per_sector: { type: number }
               core_share: { type: number, description: Share of the money that goes into broad ETFs (the core). }
         industries: { type: array, items: { $ref: "#/components/schemas/NamedId" } }
