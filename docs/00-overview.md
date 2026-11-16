@@ -41,7 +41,7 @@ measure the difference, and write it down. Each one becomes a story I can tell w
 | 4 | Data correctness | Splits and dividends, missing days, look-ahead bias, survivorship bias. |
 | 5 | Reproducibility | Same inputs + same data = same result, including seeded random numbers. |
 | 6 | Caching | Many requests for the same popular stocks, and knowing when a cached answer is stale. |
-| 7 | Security | Secrets handled properly, nothing exposed that does not need to be, only I can change things. |
+| 7 | Security | A public site with no open port on the server: rate limits per IP, validated input, a proper admin login, security headers. Only I can change things. |
 | 8 | Observability | Logs, metrics, p50/p95 latency, slow-query tracking. A number behind every claim. |
 | 9 | Extensibility | A plugin system, so new data sources and strategies are one new file. |
 
@@ -56,22 +56,29 @@ measure the difference, and write it down. Each one becomes a story I can tell w
 - **Beating the market.** The picking rules are simple and explainable. If they beat SPY, good.
   If not, the dashboard says so honestly.
 - **A quant project.** No machine learning, no factor models, no intraday data.
-- **A product with users.** One caller (my website), one admin (me).
-- **A frontend.** The pages live in my portfolio repo. This repo is backend only.
+- **A product with user accounts.** Anyone can look and run a simulation. Nobody registers.
+  One admin: me.
+- **A JavaScript app.** The pages are plain HTML rendered by the backend (Jinja2 templates
+  and HTMX). The backend stays the centre of the project.
 - **Real trading, real money, or advice.** Never.
-- **Europe, Trading 212 import, news sentiment, admin pages.** Later, as plugins.
+- **Europe, Trading 212 import, news sentiment.** Later, as plugins.
+- **Part of my portfolio website.** It is its own app with its own address. The portfolio
+  may link to it later.
 
 ## The engineering story in plain words
 
-A request comes in from my website. The API checks it and writes a job into a table. It
-answers right away with a job id. A worker process picks the job up, loads prices from a
-Postgres database that is deliberately too small to be comfortable, runs the numbers, and
-saves the result. The caller asks again a second later and gets it.
+Someone opens the site and fills in the form. The server checks the input and writes a job
+into a table. It answers right away with the address of a result page. A worker process
+picks the job up, loads prices from a Postgres database that is deliberately too small to be
+comfortable, runs the numbers, and saves the result. The page asks again every two seconds
+and shows the result when it is there.
 
 Every night the worker downloads new prices from a free source that only allows about 50
 requests an hour, so it has to be patient, careful and able to continue where it stopped.
-Then it values the three model portfolios and pushes one small summary to my website's
-database. The server itself has no open ports. It only ever makes outgoing connections.
+Then it values the three model portfolios and builds one small summary for the dashboard.
+
+The site is public, but the server has no open ports. It only ever makes outgoing
+connections, one of them a tunnel to Cloudflare that visitors' requests travel back through.
 
 When this works, I make it hurt: many requests at once, all 25 million rows, 2 GB of memory.
 I find what breaks first, fix exactly that, and write down the numbers.
@@ -83,7 +90,7 @@ I find what breaks first, fix exactly that, and write down the numbers.
 | `01-before-you-start.md` | What do I need to know and set up first? |
 | `02-architecture.md` | What are the parts and why are they shaped this way? |
 | `03-data-model.md` | Which tables, keys and indexes, and how big do they get? |
-| `openapi.yaml`, `04-api.md` | What exactly does the API accept and return? |
+| `openapi.yaml`, `04-api.md` | What exactly do the API and the pages accept and return? |
 | `05-analysis.md` | How is every number calculated and how do I test it? |
 | `06-plugins.md` | How do I add a data source or a strategy? |
 | `07-roadmap.md` | What do I build, in which order, one session at a time? |

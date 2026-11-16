@@ -17,10 +17,13 @@ up like this:
 | M2 Analysis core | Tested functions for returns, risk, weighting, picking | 11 |
 | M3 Backtester | A backtest without look-ahead, plus the outlook | 8 |
 | M4 API and job queue | The contract implemented, a worker, a CLI | 13 |
-| M5 Presentable v1 | Model portfolios, live dashboard, adapter, README | 12 |
-| **v1 total** | | **about 60** |
-| M6 Deploy, big data, first load test | Running on the VM with 25 million rows and a baseline | 12 |
+| M5 Presentable v1 | Model portfolios, the web interface, admin login, hardened for the public | 15 |
+| **v1 total** | | **about 63** |
+| M6 Deploy, big data, first load test, public address | Running on the VM with 25 million rows, a baseline, and a tunnel once I have a domain | 14 |
 | M7+ Bottleneck loops | One interview story each | about 3 each |
+
+The web pages' templates and styles are already in the repo (built for me, see
+`HANDOVER.md`). My part in M5 is the routes behind them, not the HTML.
 
 So: **v1 in about 4 months** at 4 hours a week, the VM and load tests about a month after.
 Three months only works with the short path below. I think the longer version is the right
@@ -33,11 +36,13 @@ Steps marked **(can wait)** can be skipped now and done later without breaking a
 
 - 1.6 EDGAR fundamentals: pick by price-based rules only at first. Saves 3 h.
 - 2.3 minimum variance: ship equal weight and inverse volatility. Saves 1.5 h.
-- 4.4 ETag and rate limit headers: keep the contract test, postpone the rest. Saves 2 h.
+- 4.4 ETag headers: keep the contract test, postpone the rest. Saves 1.5 h.
 - 4.5 scheduler: start the daily jobs by hand with the CLI. Saves 1.5 h.
-- 5.4 the daily README refresh: a static screenshot first. Saves 2 h.
+- 5.4 the jobs and settings admin pages: keep the login and the status page, use the CLI
+  for the rest. Saves 1.5 h.
 
-That brings v1 to about 50 hours.
+That brings v1 to about 54 hours. Steps 5.4 (login) and 5.5 (hardening) are **not** on this
+list: the site must not go public without them.
 
 ## M0. Foundations (running until mid-December)
 
@@ -224,10 +229,10 @@ numbers I can check by hand (`05-analysis.md` has them).
 
 ### [ ] 4.1 The API skeleton
 
-- **Goal:** FastAPI answers `/healthz`, `/readyz` and `/v1/meta/options`, with tokens and the error format from the contract.
+- **Goal:** FastAPI answers `/healthz`, `/readyz` and `/v1/meta/options`, with the error format from the contract.
 - **Learn first:** [FastAPI tutorial](https://fastapi.tiangolo.com/tutorial/) up to "Dependencies"; connection pools. Video: Hussein Nasser, "Database Connection Pooling" (search the channel).
-- **Build:** the app, a psycopg connection pool (start with max 5), bearer token check with constant-time compare, one error handler that produces the problem format, the `api` service in compose.
-- **Done when:** `curl` without a token gets the 401 from the contract; with the service token on an admin path, 403; options match the contract example's shape.
+- **Build:** the app, a psycopg connection pool (start with max 5), one error handler that produces the problem format, the `api` service in compose. Admin endpoints are not built yet; they come with the login in 5.4.
+- **Done when:** `curl` gets options in the contract example's shape; an unknown path gets the 404 problem format; `/readyz` turns 503 when I stop the database.
 - **Measure:** nothing.
 - **Break it on purpose:** set the pool size to 1 and send 20 parallel requests to an endpoint that sleeps in SQL (`pg_sleep`). Watch them queue.
 - **Interview point:** "The API never opens a connection per request. A small pool is shared, because each Postgres connection costs memory I do not have."
@@ -254,9 +259,9 @@ numbers I can check by hand (`05-analysis.md` has them).
 
 ### [ ] 4.4 Contract test, caching headers, rate limit
 
-- **Goal:** CI fails when code and `openapi.yaml` disagree; read endpoints send `ETag`; limits are enforced.
+- **Goal:** CI fails when code and `openapi.yaml` disagree; read endpoints send `ETag`; a first rate limit exists.
 - **Learn first:** [MDN: HTTP caching](https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching), the section on validation; token bucket again.
-- **Build:** the contract test from `04-api.md` section 9 (this one first, it is not optional); `ETag` and `If-None-Match` **(can wait)**; the token bucket and `RateLimit-*` headers **(can wait)**; the queue-full check.
+- **Build:** the contract test from `04-api.md` section 9 (this one first, it is not optional); `ETag` and `If-None-Match` **(can wait)**; a token bucket keyed by client address with `RateLimit-*` headers (the per-IP details and the Cloudflare header come in 5.5); the queue-full check.
 - **Done when:** renaming a field in code turns the test red; a second `GET` with the ETag returns 304; the 121st request in a minute gets 429.
 - **Measure:** response time and bytes for prices with and without a matching `If-None-Match`.
 - **Break it on purpose:** build the ETag without `data_version`, ingest a day, and see the API serve stale prices with a 304.
@@ -266,7 +271,7 @@ numbers I can check by hand (`05-analysis.md` has them).
 
 - **Goal:** everything I do by hand goes through jobs; daily jobs start by themselves.
 - **Learn first:** [Typer tutorial](https://typer.tiangolo.com/tutorial/), first pages.
-- **Build:** admin endpoints; turn ingestion from 1.4 into job handlers; CLI commands from `02-architecture.md`; the `schedules` table and the once-a-minute check in the worker **(can wait)**.
+- **Build:** turn ingestion from 1.4 into job handlers; CLI commands from `02-architecture.md`; the `schedules` table and the once-a-minute check in the worker **(can wait)**. The admin JSON endpoints wait for the login in 5.4.
 - **Done when:** `sim ingest prices` creates a job the worker runs; `sim jobs list` shows it; a schedule set one minute ahead fires once, not twice.
 - **Measure:** nothing.
 - **Break it on purpose:** run two workers with the scheduler on. A daily job must still be created only once. Find out why it is, or fix it.
@@ -274,7 +279,11 @@ numbers I can check by hand (`05-analysis.md` has them).
 
 ---
 
-## M5. Presentable v1 (about 12 h)
+## M5. Presentable v1 (about 15 h)
+
+The templates, styles and a preview with sample data already exist in `src/sim/web/`
+(see `HANDOVER.md`, "frontend, built by Fable"). In this milestone I write the Python behind
+them: routes, login, limits.
 
 ### [ ] 5.1 The three model portfolios
 
@@ -288,56 +297,82 @@ numbers I can check by hand (`05-analysis.md` has them).
 
 ### [ ] 5.2 The daily snapshot
 
-- **Goal:** one small JSON document per day, published to Supabase.
-- **Learn first:** least privilege. Read the migration `20261116000001_sim_snapshots.sql` in the portfolio repo and its tests.
-- **Build:** the snapshot builder (thinning to 400 points, "Other" row, outlook per month); `GET /v1/snapshot/latest`; the `export_snapshot` job calling `sim.publish_snapshot`; in Supabase: `alter role sim_publisher login password '...'` once, by hand.
-- **Done when:** the snapshot validates against the contract; it is under 256 KB; the row appears in `sim_snapshots`; publishing twice keeps one row for that day.
-- **Measure:** snapshot size in bytes.
-- **Break it on purpose:** try `select * from profiles` with the `sim_publisher` connection. It must be refused.
-- **Interview point:** "The server has no open ports. It pushes one small document a day, with a database role that can call exactly one function."
+- **Goal:** one small JSON document per day that holds everything the dashboard shows.
+- **Learn first:** why precomputing beats computing per request. Re-read `04-api.md` section 6.
+- **Build:** the snapshot builder (thinning to 400 points, "Other" row, outlook per month); the `build_snapshot` job and its schedule; `GET /v1/snapshot/latest` with `ETag` and `Cache-Control: public, max-age=300`.
+- **Done when:** the snapshot validates against the contract; it is under 256 KB; building twice on one day keeps one row; the endpoint answers 304 to a matching `If-None-Match`.
+- **Measure:** time to answer the dashboard's data from the snapshot vs. computing it from `model_values` and `price_bars` on the fly.
+- **Break it on purpose:** delete today's snapshot row. The endpoint must serve yesterday's, not an error.
+- **Interview point:** "The most visited page costs one primary-key read, because a job builds its data once a day."
 
-### [ ] 5.3 The adapter in the portfolio repo
+### [ ] 5.3 The web pages
 
-- **Goal:** a run started on my website reaches the simulator and comes back as a result.
-- **Learn first:** the docstring in `portfolio/worker/worker/runners/stock_sim.py` and `04-api.md` section 7. [httpx: Mock transports](https://www.python-httpx.org/advanced/transports/#mock-transports).
-- **Build (in the portfolio repo):** `run()` as described in the docstring; tests with a fake transport for: success, simulation failed, 429, timeout, simulator down.
-- **Done when:** the tests pass; locally, with both compose projects on `sim-net`, a demo run on the site shows a real result; my output has the same shape as the website's sample data.
-- **Measure:** time from click to result.
-- **Break it on purpose:** stop the simulator and start a run. The site must show a clear "try again later", and the job must be retried.
-- **Interview point:** "Two services talk through a written contract. The adapter maps errors into 'retry later' and 'do not retry', and sends an idempotency key so a retry never runs the work twice."
+- **Goal:** the dashboard, the simulation form and the result page work in a browser with real data.
+- **Learn first:** [FastAPI: Templates](https://fastapi.tiangolo.com/advanced/templates/); [htmx docs](https://htmx.org/docs/), the parts on `hx-get`, `hx-trigger` and `hx-swap`. Video: Fireship, "htmx in 100 seconds". Then open the preview (`README` in `src/sim/web/`) and read one template next to its sample data.
+- **Build:**
+  1. Mount the static files and the templates.
+  2. Page routes from `04-api.md` section 1: each calls the same service function as its JSON twin and hands the result to the template. Register them with `include_in_schema=False`.
+  3. `POST /simulate`: validate with the same pydantic model as the API, on error re-render the form with messages, on success redirect to `/simulations/{id}`.
+  4. `GET /simulations/{id}/status`: the small HTML piece HTMX polls.
+  5. Plain error pages for 404, 429, 500 and 503.
+- **Done when:** I can run a simulation in the browser from form to result; a wrong input shows a message next to the field; the page test renders every page from sample data without error.
+- **Measure:** time to first byte of the dashboard, and how many database queries one page view makes (it should be one or two).
+- **Break it on purpose:** turn JavaScript off in the browser and run a simulation. The page must still work with a manual reload.
+- **Interview point:** "The pages are server-rendered and call the same service functions as the JSON API, so a page and its endpoint cannot disagree."
 
-### [ ] 5.4 The README showcase
+### [ ] 5.4 Admin login and admin pages
+
+- **Goal:** only I can see and use everything under `/admin` and `/v1/admin`.
+- **Learn first:** `02-architecture.md` section 8. Password hashing: video, Computerphile, "How NOT to Store Passwords!". [OWASP: Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html), the cookie attributes part. Library: [argon2-cffi docs](https://argon2-cffi.readthedocs.io/).
+- **Build:**
+  1. `0006_admin.sql`: `admin_credentials`, `admin_sessions`, `settings`.
+  2. `sim admin set-password` (asks twice, stores an Argon2id hash).
+  3. `POST /admin/login`: check the hash, create a session row, set the cookie (`HttpOnly`, `SameSite=Strict`, `Secure` when the public URL is https). Limit attempts.
+  4. One dependency `require_admin` used by every admin route; CSRF check for every admin request that changes something.
+  5. `POST /admin/logout`. Changing the password deletes all sessions.
+  6. The status page and `GET /v1/admin/status`; then jobs and settings pages **(can wait)**.
+- **Done when:** the route-walking test passes (no admin route answers without a session); login with a wrong password fails slowly and is logged; after logout the old cookie is refused.
+- **Measure:** how long one Argon2id check takes with my settings (aim for about 100 to 300 ms: slow for an attacker, fine for me).
+- **Break it on purpose:** (1) copy the cookie, log out, send the copied cookie with `curl`. (2) Write a tiny HTML file on my disk with a form that posts to `/admin/settings` and open it while logged in. Both must fail, and I should be able to say which defence stopped each.
+- **Interview point:** "One admin, no users table. The password is stored as an Argon2id hash, sessions live in the database so logout really ends them, and admin forms carry a CSRF token."
+
+### [ ] 5.5 Ready for strangers
+
+- **Goal:** the app can be put on the internet without me worrying.
+- **Learn first:** [MDN: Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP), the introduction. Video: search "security headers explained" and watch one short overview. Re-read the risk table in `02-architecture.md` section 8.
+- **Build:**
+  1. Per-IP limits from `04-api.md` section 4, on a keyed hash of the address. Read `CF-Connecting-IP` only when `SIM_TRUST_PROXY=cloudflare`.
+  2. The settings switch that turns public simulations off (503 and a notice on the form).
+  3. A middleware that adds the security headers to every response.
+  4. `Cache-Control` per route as in the table; `no-store` on everything admin.
+  5. A test per risk in the table: too many simulations, oversized input, a fake `CF-Connecting-IP` without the setting, a page that must not be cached.
+- **Done when:** `curl -I` on a page shows all headers from the table; the browser console shows no CSP violation on any page; the 6th simulation in ten minutes gets a 429 with `Retry-After`.
+- **Measure:** how many identical default simulations per second the app survives, thanks to the result cache, compared with unique ones.
+- **Break it on purpose:** send 200 simulation requests in a loop with a forged `CF-Connecting-IP` header each time, once with and once without `SIM_TRUST_PROXY`. Explain the difference.
+- **Interview point:** "There are no accounts, so I limit per IP address, on a keyed hash so I store no addresses. Behind the tunnel I trust Cloudflare's header for the real address, and only then."
+
+### [ ] 5.6 The README showcase
 
 - **Goal:** someone who only sees the GitHub page understands the project in a minute.
-- **Learn first:** [GitHub Actions: schedule](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule).
-- **Build:** fill the README skeleton; a screenshot or GIF of the dashboard; a small script that reads the public snapshot and rewrites the performance table between two marker comments; a daily workflow that runs it and commits **(can wait: start with a static table)**.
-- **Done when:** the README renders with diagram and table; the workflow ran once and changed only the marked block.
+- **Build:** fill the README skeleton; a screenshot or GIF of the dashboard; the performance table filled by hand for now (the daily refresh needs the public address and comes in 6.5).
+- **Done when:** the README renders with diagram, screenshot and table; a friend who does not code can tell me what the project does after reading it.
 - **Measure:** nothing.
-- **Break it on purpose:** make the snapshot unreachable (wrong URL). The workflow must fail visibly and leave the README untouched.
-- **Interview point:** "The README shows live performance, refreshed daily by a workflow that only needs a public read-only key."
-
-### [ ] 5.5 Going live
-
-- **Goal:** the website shows real data instead of sample data.
-- **Build:** apply the portfolio migration and seed in Supabase; `status: live` in the manifest; set `SIM_DATA=live` in Vercel; rebuild the portfolio worker with the extra compose file. Checklist in the portfolio's `docs/ROADMAP.md`, item 19.
-- **Done when:** the acceptance line of that item passes.
-- **Measure:** nothing.
-- **Break it on purpose:** publish a snapshot with `schema_version: 2` by hand. The site must show "no data", not a broken page.
-- **Interview point:** "Going live was one environment variable, because the pages were built against the contract's examples from the start."
+- **Break it on purpose:** nothing to break. Ask someone to read it instead.
+- **Interview point:** "The README is written for someone with one minute. The details are one click away in the docs."
 
 ---
 
-## M6. Deploy, big data, first load test (about 12 h)
+## M6. Deploy, big data, first load test, public address (about 14 h)
 
 ### [ ] 6.1 The VM
 
-- **Goal:** the simulator runs on the Oracle VM next to the portfolio worker.
+- **Goal:** the simulator runs on the Oracle VM, with no public address yet.
 - **Learn first:** Docker networks. [Docker: Networking overview](https://docs.docker.com/engine/network/). Video: NetworkChuck, "Docker networking is CRAZY" (search).
-- **Build:** production compose file (no published ports, `sim-net` external, limits from `02-architecture.md` section 7, non-root, restart policy); secrets in `.env` on the VM; a deploy workflow over SSH; nightly `pg_dump` to the VM's disk.
-- **Done when:** from the portfolio worker container `curl http://sim-api:8000/healthz` works; from outside the VM nothing answers; a reboot brings everything back.
+- **Build:** production compose file (no `ports:` anywhere, two networks: `web` for `api` and later the tunnel, `data` for `api`, `worker` and `db`; limits from `02-architecture.md` section 7; non-root; restart policy); secrets in `.env` on the VM; a deploy workflow over SSH; nightly `pg_dump` to the VM's disk; `sim admin set-password` on the VM.
+- **Done when:** through `ssh -L 8000:localhost:8000 vm` I can open the dashboard and log in; from outside the VM nothing answers; a reboot brings everything back.
 - **Measure:** `docker stats` at rest: RAM per container against the budget.
-- **Break it on purpose:** try to reach the database from the portfolio worker container. It must not resolve.
-- **Interview point:** "The API and the database are on different Docker networks. The only thing another service can reach is the API, and nothing is reachable from the internet."
+- **Break it on purpose:** start a throwaway container on the `web` network and try to reach the database from it. It must not resolve.
+- **Interview point:** "The web side and the database are on different Docker networks. Whatever sits in front of the API can never talk to Postgres directly."
 
 ### [ ] 6.2 Seeing inside
 
@@ -363,11 +398,30 @@ numbers I can check by hand (`05-analysis.md` has them).
 
 - **Goal:** a repeatable test and a baseline in `BENCHMARKS.md`.
 - **Learn first:** [k6: Get started](https://grafana.com/docs/k6/latest/get-started/) and "Running k6". Video: the official "k6 in 10 minutes" style intro on the Grafana channel (search).
-- **Build:** a k6 script with three scenarios: (a) price reads for a few popular tickers, (b) price reads for random tickers across all 5,000, (c) simulations with a small set of repeating inputs. Run from my Mac through an SSH tunnel. Fill the setup table in `BENCHMARKS.md`.
+- **Build:** a k6 script with four scenarios: (a) the dashboard page, (b) price reads for a few popular tickers, (c) price reads for random tickers across all 5,000, (d) simulations with a small set of repeating inputs. Run from my Mac through an SSH tunnel, logged in as admin for the price reads, with the per-IP limits raised on the settings page for the test. Fill the setup table in `BENCHMARKS.md`.
 - **Done when:** the same test run twice gives similar numbers; the baseline table is filled.
 - **Measure:** requests per second, p50, p95, error rate per scenario; CPU and RAM per container during the test.
 - **Break it on purpose:** raise the load until something fails. Write down what failed first. That is loop 1.
 - **Interview point:** "I load test from outside the server through an SSH tunnel, so the test tool does not steal CPU from the thing I measure."
+
+---
+
+### [ ] 6.5 The public address **(when I have a domain)**
+
+Can be done any time after 5.5 and 6.1. Nothing else waits for it.
+
+- **Goal:** the app is reachable at `https://sim.<my domain>` with no open port on the VM, and the README table refreshes itself.
+- **Learn first:** how a tunnel works: `02-architecture.md` section 6. [Cloudflare docs: Create a tunnel (dashboard)](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/create-remote-tunnel/). Video: search "Cloudflare Tunnel explained" (for example by NetworkChuck or Christian Lempa). [GitHub Actions: schedule](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule).
+- **Build:**
+  1. The ten setup steps in `02-architecture.md` section 6.
+  2. Cloudflare Access rule for `/admin*`: only my email address.
+  3. A cache rule in Cloudflare so pages with `Cache-Control: public` are cached at the edge (by default it caches static files only).
+  4. A small script that calls `GET /v1/snapshot/latest`, checks `schema_version`, and rewrites the README table between the two marker comments; a daily workflow that runs it and commits.
+  5. Decide on Impressum and privacy notice, add them to `/about`.
+- **Done when:** the site loads over HTTPS from my phone's mobile network; `nmap` against the VM's address still shows no open web port; `/admin` asks for Cloudflare's login first and mine second; the workflow ran once and changed only the marked block; [Mozilla's HTTP Observatory](https://developer.mozilla.org/en-US/observatory) gives the site a good grade.
+- **Measure:** response time of the dashboard from my Mac with a cold and a warm Cloudflare cache (the `cf-cache-status` header says which it was).
+- **Break it on purpose:** stop the `tunnel` container and look at what a visitor sees. Then stop `api` but leave the tunnel. Then make the snapshot endpoint fail and check that the workflow fails visibly and leaves the README untouched.
+- **Interview point:** "The site is public but the server has no inbound port. A small connector opens an outbound tunnel to Cloudflare, which gives me HTTPS, a cache and flood protection for free."
 
 ---
 
@@ -387,6 +441,8 @@ this list. These are the candidates I expect:
 | Worker memory | pandas builds a huge table, the container is killed | Load only needed columns and dates, `float32` | memory profiling |
 | JSON building | CPU time in serialisation for long price lists | Build JSON in Postgres, or a faster encoder | profiling |
 | Queue polling | Unlikely. Only if polling shows up in the statistics | `LISTEN/NOTIFY`; Redis only if that is not enough | pub/sub |
+| Page polling | Many open result pages, each asking every 2 s | Longer intervals with backoff, or server-sent events | long-lived connections |
+| Rate limiter in memory | Limits reset on restart, or two API processes disagree | Counters in Postgres or Redis | shared state |
 
 For every loop the same seven fields apply; the last four go into the benchmark entry:
 goal (the symptom gone), concept to learn (from the table), build (one change), done (the
@@ -404,5 +460,8 @@ Not planned in detail. Each is a self-contained addition:
 - **Trading 212 import:** read-only import of my real positions through their public API, shown next to a model portfolio.
 - **Europe:** a second universe and a price provider that covers European exchanges, plus currencies.
 - **AI news sentiment:** a picker that scores recent news. Hard to do without look-ahead; the news must carry timestamps.
-- **Admin pages:** on the website, sending `admin_command` jobs through the portfolio's queue.
-- **Public read-only API:** through Cloudflare Tunnel, once I have a domain.
+- **Charts with hover values:** a little JavaScript on top of the server-drawn SVG.
+- **A second language:** move the page texts into message files.
+- **My portfolio website (optional, last):** a link to the simulator and one small summary
+  card that reads `GET /v1/snapshot/latest`. Nothing more, and nothing in this repo changes
+  for it.

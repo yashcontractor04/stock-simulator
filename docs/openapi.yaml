@@ -2,27 +2,32 @@ openapi: 3.1.0
 info:
   title: Stock Allocation Simulator API
   version: 0.1.0
-  summary: Internal API of the stock allocation simulator.
+  summary: JSON API of the stock allocation simulator.
   description: |
-    This is the contract between the simulator and its only caller in v1: the adapter in
-    my portfolio website's worker. It is written before the code. A CI test compares it
-    with the schema that FastAPI generates, so the two cannot drift apart.
+    The simulator is a standalone web app. This file describes its JSON API. The web
+    pages (dashboard, simulation form, admin pages) are rendered by the same server and
+    use the same shapes; their routes are listed in docs/04-api.md, not here.
 
-    The API is not reachable from the internet. It listens only inside a private Docker
-    network. Every request still needs a bearer token.
+    The contract is written before the code. A CI test compares it with the schema that
+    FastAPI generates, so the two cannot drift apart.
+
+    Two access levels:
+    - public: no account and no token. Rate-limited per IP address.
+    - admin: only me, after logging in on /admin/login. The browser then holds a session
+      cookie. Requests that change something also need the CSRF token header.
 
     Not financial advice. All numbers come from a simulation on historical data.
   license:
     name: MIT
     identifier: MIT
 servers:
-  - url: http://sim-api:8000
-    description: Inside the private Docker network (production)
   - url: http://localhost:8000
-    description: Local development
+    description: Local development, and the VM through an SSH tunnel
+  - url: https://sim.example.dev
+    description: Public address through Cloudflare Tunnel (placeholder until I have a domain)
 tags:
   - name: health
-    description: Is the service alive? No token needed.
+    description: Is the service alive?
   - name: meta
     description: The choices a form can offer.
   - name: simulations
@@ -32,9 +37,8 @@ tags:
   - name: instruments
     description: Stocks and ETFs the simulator knows, and their prices.
   - name: admin
-    description: Only with the admin token. Used by the CLI and, later, admin pages.
-security:
-  - serviceToken: []
+    description: Only after the admin login. Used by the admin pages.
+security: []
 
 paths:
   /healthz:
@@ -127,7 +131,6 @@ paths:
                 time_span_years: { min: 1, max: 20 }
                 prices_as_of: "2026-11-13"
         "304": { $ref: "#/components/responses/NotModified" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /v1/simulations:
@@ -137,6 +140,7 @@ paths:
       summary: Order a simulation.
       description: |
         Does not run the simulation. It puts a job in the queue and answers at once.
+        Public. Limited to 5 per 10 minutes and 30 per day for one IP address.
 
         Two ways a request does not create new work:
         - The same `Idempotency-Key` was used before: the first simulation is returned.
@@ -202,7 +206,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Simulation" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
         "409":
           description: The Idempotency-Key was used before with different inputs.
           content:
@@ -216,7 +219,16 @@ paths:
                 detail: This Idempotency-Key belongs to a simulation with different inputs.
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
-        "503": { $ref: "#/components/responses/Unavailable" }
+        "503":
+          description: |
+            No new simulations right now: the queue is full (`queue_full`), I switched
+            public simulations off (`simulations_disabled`), or the database is down.
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example: { type: about:blank, title: Service unavailable, status: 503, code: queue_full, detail: 50 simulations are already waiting. Try again in a minute. }
 
   /v1/simulations/{simulation_id}:
     parameters:
@@ -376,7 +388,6 @@ paths:
                       message: Only 3 companies passed the filters. At least 5 are needed. Try adding an industry.
                       retryable: false
         "304": { $ref: "#/components/responses/NotModified" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     delete:
@@ -390,7 +401,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Simulation" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/model-portfolios:
@@ -425,17 +435,16 @@ paths:
                   - { risk_level: medium, started_on: "2026-03-02", start_value: 10000, value: 10688.45, total_return: 0.0688, benchmark_return: 0.0731, day_change: 0.0024 }
                   - { risk_level: high, started_on: "2026-03-02", start_value: 10000, value: 10951.80, total_return: 0.0952, benchmark_return: 0.0731, day_change: 0.0047 }
         "304": { $ref: "#/components/responses/NotModified" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /v1/snapshot/latest:
     get:
       tags: [model-portfolios]
       operationId: getLatestSnapshot
-      summary: The daily snapshot, exactly as it is copied to Supabase.
+      summary: The daily snapshot, everything the dashboard shows in one document.
       description: |
-        This is the shape the public dashboard on my website reads. The `export_snapshot`
-        job builds it once a day after the model portfolios are updated and writes it into
-        the public table `sim_snapshots` in Supabase (column `payload`).
+        Public. The `build_snapshot` job builds it once a day after the model portfolios
+        are updated and stores it. The dashboard page renders it, and a scheduled GitHub
+        Action reads it to refresh the performance table in the README.
 
         It is small on purpose: at most 400 points per series and at most 25 positions per
         portfolio, so the whole thing stays under 256 KB.
@@ -569,7 +578,6 @@ paths:
                   - Forward test. The portfolios were fixed on the start date and are valued every trading day.
                   - Not financial advice.
         "304": { $ref: "#/components/responses/NotModified" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/instruments:
@@ -617,7 +625,6 @@ paths:
                   - { ticker: MRK, name: "Merck & Co., Inc.", kind: stock, sector: Healthcare, sic: "2834", first_price_date: "2006-01-03", last_price_date: "2026-11-13" }
                   - { ticker: MSFT, name: Microsoft Corporation, kind: stock, sector: Technology, sic: "7372", first_price_date: "2006-01-03", last_price_date: "2026-11-13" }
                 next_cursor: MSFT
-        "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
@@ -626,7 +633,14 @@ paths:
       tags: [instruments]
       operationId: getPrices
       summary: Daily prices of one instrument.
+      security:
+        - adminSession: []
       description: |
+        Admin only for now. Raw prices of single stocks come from a data provider whose
+        free plan is for personal use. It becomes public only after I have checked that
+        the provider's terms allow it (see 02-architecture.md, decision D5).
+
+
         The endpoint many callers hit for the same few popular tickers, so it is the main
         place for caching work. The `ETag` is built from the ticker, the date range and the
         `data_version`. When new data is ingested, `data_version` goes up and old cache
@@ -672,14 +686,89 @@ paths:
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
+  /v1/admin/status:
+    get:
+      tags: [admin]
+      operationId: getAdminStatus
+      summary: State of the data and the system, for the admin start page.
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: Counts, freshness and the last runs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminStatus" }
+              example:
+                data_version: 412
+                prices_as_of: "2026-11-13"
+                instruments: { total: 536, stocks: 506, etfs: 30, stale: 4 }
+                price_rows: 2714330
+                database_size_mb: 268
+                queue: { queued: 1, running: 1, failed_last_24h: 2 }
+                simulations_last_24h: 37
+                rate_limited_last_24h: 5
+                last_runs:
+                  - { kind: ingest_prices, status: succeeded, finished_at: "2026-11-14T03:40:12Z", message: 506 of 506 tickers up to date }
+                  - { kind: update_model_portfolios, status: succeeded, finished_at: "2026-11-14T03:41:02Z", message: 3 portfolios valued for 2026-11-13 }
+                  - { kind: build_snapshot, status: succeeded, finished_at: "2026-11-14T03:41:05Z", message: 31 KB }
+                  - { kind: ingest_fundamentals, status: failed, finished_at: "2026-11-10T04:02:44Z", message: SEC EDGAR answered 503 three times }
+                stale_tickers: [BRK.B, BF.B, GEV, SOLV]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/admin/settings:
+    get:
+      tags: [admin]
+      operationId: getAdminSettings
+      summary: The settings I can change without a deploy.
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          description: Current settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+              example:
+                public_simulations_enabled: true
+                simulations_per_ip_per_10_minutes: 5
+                simulations_per_ip_per_day: 30
+                max_queued_simulations: 50
+                requests_per_ip_per_minute: 120
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [admin]
+      operationId: updateAdminSettings
+      summary: Change one or more settings.
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettingsPatch" }
+            example: { public_simulations_enabled: false }
+      responses:
+        "200":
+          description: The settings after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
   /v1/admin/jobs:
     post:
       tags: [admin]
       operationId: createAdminJob
-      summary: Queue an admin job, ingest data, update model portfolios or export the snapshot.
+      summary: Queue an admin job, ingest data, update model portfolios or build the snapshot.
       security:
-        - adminToken: []
+        - adminSession: []
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -691,8 +780,8 @@ paths:
                 summary: Fetch missing prices since a date
                 value: { kind: ingest_prices, args: { since: "2026-11-01", provider: tiingo } }
               snapshot:
-                summary: Build and publish today's snapshot
-                value: { kind: export_snapshot, args: {} }
+                summary: Build today's snapshot
+                value: { kind: build_snapshot, args: {} }
       responses:
         "202":
           description: Queued.
@@ -724,7 +813,7 @@ paths:
       operationId: listAdminJobs
       summary: Look at the queue.
       security:
-        - adminToken: []
+        - adminSession: []
       parameters:
         - name: status
           in: query
@@ -772,7 +861,7 @@ paths:
       operationId: getAdminJob
       summary: One job.
       security:
-        - adminToken: []
+        - adminSession: []
       parameters:
         - name: job_id
           in: path
@@ -794,7 +883,7 @@ paths:
       operationId: getMetrics
       summary: Numbers about the service in Prometheus text format.
       security:
-        - adminToken: []
+        - adminSession: []
       responses:
         "200":
           description: Counters and histograms.
@@ -811,14 +900,14 @@ paths:
 
 components:
   securitySchemes:
-    serviceToken:
-      type: http
-      scheme: bearer
-      description: SIM_SERVICE_TOKEN. Held by the portfolio adapter.
-    adminToken:
-      type: http
-      scheme: bearer
-      description: SIM_ADMIN_TOKEN. Held by me. Also accepted wherever the service token is.
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: sim_session
+      description: |
+        Set by the login form on /admin/login. HttpOnly, SameSite=Strict, and Secure when
+        served over HTTPS. Lasts 12 hours. Requests that change something (POST, PATCH,
+        DELETE under /v1/admin) must also send the X-CSRF-Token header.
 
   parameters:
     SimulationId:
@@ -826,13 +915,20 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: The token from the admin page (a meta tag). HTMX sends it automatically. Stops other websites from sending admin requests through my browser.
+      schema: { type: string, minLength: 20, maxLength: 100 }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: false
       description: |
-        Any unique text chosen by the caller, for example the portfolio's job id. Sending
-        the same key again returns the first answer instead of creating a second job.
+        Any unique text chosen by the caller, for example a random id made when the form
+        was opened. Sending the same key again returns the first answer instead of
+        creating a second job, so a double click or a retry is harmless.
       schema: { type: string, minLength: 8, maxLength: 100 }
     IfNoneMatch:
       name: If-None-Match
@@ -847,15 +943,16 @@ components:
       schema: { type: string, examples: ['"sim-0193b6f4-v412"'] }
     CacheControl:
       description: |
-        How long the answer may be reused. Finished simulations: `private, max-age=86400, immutable`.
-        Options and instruments: `private, max-age=3600`. Prices and snapshot: `private, max-age=300`.
-        Unfinished simulations: `no-store`.
-      schema: { type: string, examples: ["private, max-age=300"] }
+        How long the answer may be reused, by browsers and by Cloudflare. Finished
+        simulations: `public, max-age=86400, immutable`. Options and instruments:
+        `public, max-age=3600`. Snapshot and model portfolios: `public, max-age=300`.
+        Unfinished simulations and everything for the admin: `no-store`.
+      schema: { type: string, examples: ["public, max-age=300"] }
     RetryAfter:
       description: Seconds to wait before asking again.
       schema: { type: integer, minimum: 1, examples: [2] }
     RateLimitLimit:
-      description: Requests allowed per minute for this token.
+      description: Requests allowed per minute for this IP address.
       schema: { type: integer, examples: [120] }
     RateLimitRemaining:
       description: Requests left in the current minute.
@@ -868,17 +965,17 @@ components:
     NotModified:
       description: The caller's copy is still current. No body.
     Unauthorized:
-      description: The bearer token is missing or wrong.
+      description: Not logged in, or the session has expired.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
-          example: { type: about:blank, title: Unauthorized, status: 401, code: unauthorized, detail: Missing or invalid bearer token. }
+          example: { type: about:blank, title: Unauthorized, status: 401, code: unauthorized, detail: Log in on /admin/login first. }
     Forbidden:
-      description: The token is valid but not the admin token.
+      description: Logged in, but the CSRF token is missing or wrong.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
-          example: { type: about:blank, title: Forbidden, status: 403, code: forbidden, detail: This endpoint needs the admin token. }
+          example: { type: about:blank, title: Forbidden, status: 403, code: csrf_failed, detail: Missing or wrong X-CSRF-Token header. }
     NotFound:
       description: No such thing.
       content:
@@ -899,7 +996,7 @@ components:
             errors:
               - { field: time_span_years, message: must be between 1 and 20 }
     TooManyRequests:
-      description: The rate limit for this token is used up.
+      description: The rate limit for this IP address is used up.
       headers:
         Retry-After: { $ref: "#/components/headers/RetryAfter" }
         RateLimit-Limit: { $ref: "#/components/headers/RateLimitLimit" }
@@ -948,7 +1045,7 @@ components:
         status: { type: integer }
         code:
           type: string
-          enum: [unauthorized, forbidden, not_found, validation_failed, idempotency_conflict, rate_limited, queue_full, database_unavailable, internal_error]
+          enum: [unauthorized, csrf_failed, not_found, validation_failed, idempotency_conflict, rate_limited, queue_full, simulations_disabled, database_unavailable, internal_error]
         detail: { type: string }
         errors:
           type: array
@@ -979,7 +1076,7 @@ components:
 
     JobKind:
       type: string
-      enum: [simulation, ingest_prices, ingest_fundamentals, update_model_portfolios, export_snapshot, admin_command]
+      enum: [simulation, ingest_prices, ingest_fundamentals, update_model_portfolios, build_snapshot]
 
     NamedId:
       type: object
@@ -1254,9 +1351,10 @@ components:
     Snapshot:
       type: object
       description: |
-        The small daily summary that is copied into Supabase for the public dashboard.
-        `schema_version` goes up when a field is removed or changes meaning. The website
-        refuses versions it does not know and shows the last good one.
+        The small daily summary behind the dashboard and the README table.
+        `schema_version` goes up when a field is removed or changes meaning, so a reader
+        (the README script, later maybe a card on my portfolio) can refuse versions it
+        does not know.
       additionalProperties: false
       required: [schema_version, as_of, generated_at, started_on, start_value, currency, benchmark, portfolios, notes]
       properties:
@@ -1333,6 +1431,75 @@ components:
         close: { type: array, maxItems: 5300, items: { type: number } }
         volume: { type: array, maxItems: 5300, items: { type: integer } }
 
+    AdminStatus:
+      type: object
+      additionalProperties: false
+      required: [data_version, prices_as_of, instruments, price_rows, database_size_mb, queue, simulations_last_24h, rate_limited_last_24h, last_runs, stale_tickers]
+      properties:
+        data_version: { type: [integer, "null"] }
+        prices_as_of: { type: [string, "null"], format: date }
+        instruments:
+          type: object
+          additionalProperties: false
+          required: [total, stocks, etfs, stale]
+          properties:
+            total: { type: integer }
+            stocks: { type: integer }
+            etfs: { type: integer }
+            stale: { type: integer, description: Instruments whose newest price is older than the last trading day. }
+        price_rows: { type: integer }
+        database_size_mb: { type: integer }
+        queue:
+          type: object
+          additionalProperties: false
+          required: [queued, running, failed_last_24h]
+          properties:
+            queued: { type: integer }
+            running: { type: integer }
+            failed_last_24h: { type: integer }
+        simulations_last_24h: { type: integer }
+        rate_limited_last_24h: { type: integer, description: Requests refused with 429. }
+        last_runs:
+          type: array
+          maxItems: 10
+          description: The newest finished job of each kind.
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, status, finished_at, message]
+            properties:
+              kind: { $ref: "#/components/schemas/JobKind" }
+              status: { $ref: "#/components/schemas/JobStatus" }
+              finished_at: { type: [string, "null"], format: date-time }
+              message: { type: [string, "null"], maxLength: 300 }
+        stale_tickers:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/Ticker" }
+
+    Settings:
+      type: object
+      additionalProperties: false
+      required: [public_simulations_enabled, simulations_per_ip_per_10_minutes, simulations_per_ip_per_day, max_queued_simulations, requests_per_ip_per_minute]
+      properties:
+        public_simulations_enabled: { type: boolean, description: The emergency switch. Off means the form shows a notice and POST /v1/simulations answers 503. }
+        simulations_per_ip_per_10_minutes: { type: integer, minimum: 1, maximum: 100 }
+        simulations_per_ip_per_day: { type: integer, minimum: 1, maximum: 1000 }
+        max_queued_simulations: { type: integer, minimum: 1, maximum: 500 }
+        requests_per_ip_per_minute: { type: integer, minimum: 10, maximum: 6000 }
+
+    SettingsPatch:
+      type: object
+      description: Any subset of Settings.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        public_simulations_enabled: { type: boolean }
+        simulations_per_ip_per_10_minutes: { type: integer, minimum: 1, maximum: 100 }
+        simulations_per_ip_per_day: { type: integer, minimum: 1, maximum: 1000 }
+        max_queued_simulations: { type: integer, minimum: 1, maximum: 500 }
+        requests_per_ip_per_minute: { type: integer, minimum: 10, maximum: 6000 }
+
     AdminJobRequest:
       type: object
       additionalProperties: false
@@ -1340,7 +1507,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [ingest_prices, ingest_fundamentals, update_model_portfolios, export_snapshot, admin_command]
+          enum: [ingest_prices, ingest_fundamentals, update_model_portfolios, build_snapshot]
         args:
           type: object
           description: Depends on the kind. See docs/04-api.md.

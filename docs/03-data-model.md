@@ -29,6 +29,7 @@ erDiagram
 | Bookkeeping | `ingestion_runs`, `ingestion_state` | worker |
 | Work | `jobs`, `schedules`, `simulations` | api (insert), worker (update) |
 | Model portfolios | `model_portfolios`, `model_positions`, `model_values`, `snapshots` | worker |
+| Admin | `admin_credentials`, `admin_sessions`, `settings` | api, CLI |
 
 ## 2. Market data
 
@@ -304,8 +305,38 @@ create table model_values (
 - Positions are stored as **shares**, not weights. Value on a day = sum of shares × close.
   Weights drift as prices move, shares do not.
 - `model_values` grows by 3 rows a day. About 750 rows a year.
-- `snapshots (as_of date primary key, payload jsonb, published_at)` keeps what was sent to
-  Supabase, so I can see what the dashboard showed on any day.
+- `snapshots (as_of date primary key, payload jsonb, built_at)` holds the daily summary
+  that the dashboard and `GET /v1/snapshot/latest` serve. One primary-key read for the most
+  visited page. Old rows stay, so I can see what the dashboard showed on any day.
+
+## 6a. Admin
+
+```sql
+create table admin_credentials (
+  id            boolean primary key default true check (id),  -- at most one row
+  password_hash text not null,                                -- Argon2id, never the password
+  changed_at    timestamptz not null default now()
+);
+create table admin_sessions (
+  session_hash text primary key,          -- sha256 of the random id in the cookie
+  csrf_token   text not null,
+  created_at   timestamptz not null default now(),
+  expires_at   timestamptz not null
+);
+create table settings (
+  key   text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+```
+
+- **Why the session id is stored as a hash:** if someone ever reads this table (a backup, a
+  bug), they still cannot log in with what they find. The cookie holds the real id.
+- **Why sessions are in the database at all** and not just a signed cookie: so logout and
+  "password changed" really end a session. A signed cookie stays valid until it expires.
+- `settings` holds the few values from the admin settings page. The API reads them with a
+  short in-memory cache (10 seconds), so a busy site does not query them on every request.
+- No table stores IP addresses. Rate limit counters live in the API's memory.
 
 ## 7. Partitioning plan
 
@@ -354,7 +385,7 @@ Set in the compose file, written down here so I can explain each one.
 | Role | May do |
 |---|---|
 | `sim_owner` | Owns the tables. Used only by migrations. |
-| `sim_api` | Read everything. Insert into `jobs` and `simulations`. Update `jobs.status` to `cancelled`. |
+| `sim_api` | Read everything. Insert into `jobs` and `simulations`. Update `jobs.status` to `cancelled`. Read and write `admin_sessions` and `settings`. Read `admin_credentials`. |
 | `sim_worker` | Read and write everything except changing the table structure. |
 
 The API cannot change a price, even if someone found a bug in it.

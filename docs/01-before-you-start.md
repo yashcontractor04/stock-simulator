@@ -20,13 +20,15 @@ give the channel and the title to search for, because video links change.
 | HTTP and REST | Methods, status codes (200, 202, 304, 404, 409, 422, 429, 503), headers, JSON. | [MDN: An overview of HTTP](https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview). Video: Fireship, "RESTful APIs in 100 Seconds" |
 | Docker | Image vs. container, a Dockerfile, a compose file with two services, volumes. | [Docker: Get started](https://docs.docker.com/get-started/). Video: Fireship, "Docker in 100 Seconds", then TechWorld with Nana, "Docker Tutorial for Beginners" |
 | FastAPI | A route, a pydantic model for input and output, dependency injection for the database. | [FastAPI tutorial](https://fastapi.tiangolo.com/tutorial/), "First Steps" to "Request Body" |
+| Jinja2 and HTMX | A template with a loop and a block, and one HTMX attribute that swaps part of a page. Needed from M5. | [Jinja: Template Designer Documentation](https://jinja.palletsprojects.com/en/stable/templates/), first sections. [htmx.org: docs](https://htmx.org/docs/), "Introduction" to "Swapping". Video: Fireship, "htmx in 100 seconds" |
+| Cookies, sessions, CSRF | I can say what a session cookie is and why another website must not be able to use mine. Needed from M5. | [MDN: Using HTTP cookies](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Cookies). [OWASP: CSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html), the first part |
 | pytest | Writing a test, fixtures, parametrize. | [pytest: Get started](https://docs.pytest.org/en/stable/getting-started.html) |
 | pandas basics | A DataFrame with a date index, `pct_change`, `rolling`, `groupby`. | [10 minutes to pandas](https://pandas.pydata.org/docs/user_guide/10min.html) |
 | Stochastik I already have | Random variables, expected value, variance, covariance, quantiles, law of large numbers, confidence intervals. All used in `05-analysis.md`. | Video: StatQuest, "Bootstrapping Main Ideas!!!" for the one new idea |
 
 Things I do **not** need before starting, because a milestone teaches them when needed:
 partitioning, connection pooling, `FOR UPDATE SKIP LOCKED`, Prometheus, k6, GitHub Actions
-deploys.
+deploys, Cloudflare Tunnel.
 
 ## 2. Accounts
 
@@ -36,12 +38,15 @@ deploys.
 | Tiingo | daily prices | free plan: about 50 requests an hour, 1,000 a day | **create before M1** |
 | SEC EDGAR | company numbers | free, no account. Needs a `User-Agent` header with my name and email, max 10 requests a second | nothing to do |
 | Oracle Cloud | the VM | Always Free | have it (from the portfolio) |
-| Supabase | the public snapshot table | free | have it (from the portfolio) |
+| A domain | the public address | free first year through the GitHub Student Developer Pack, then about €10 to €15 a year | **not yet**. Nothing before M6 needs it |
+| Cloudflare | the tunnel, HTTPS, cache | free | create when I have the domain |
 
 Terms I must read once myself and note here with the date:
 
-- [ ] Tiingo terms for the free plan. It is for personal, internal use. My dashboard shows
-      only my own portfolio values, not raw prices. Read date: ______
+- [ ] Tiingo terms for the free plan. It is for personal, internal use, and my site is
+      public. The pages show values of whole portfolios, not raw prices of single stocks.
+      The one endpoint that returns raw prices stays admin-only until I am sure this is
+      allowed. If it is not: ask Tiingo, or switch the provider plugin. Read date: ______
 - [ ] SEC fair access policy ([sec.gov, Accessing EDGAR Data](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data)). Read date: ______
 - [ ] Stooq, if I use its bulk download for the big history load. Read date: ______
 - [ ] yfinance is unofficial. It reads Yahoo pages that Yahoo's terms reserve for personal
@@ -110,6 +115,12 @@ Check: `docker compose version`, `python3 --version` and `psql --version` all pr
 | p50, p95 | The median response time, and the time 95% of requests stay under. |
 | Plugin | A piece of code behind a fixed interface that can be added without changing the core. |
 | ETag | A fingerprint of a response. The caller can ask "has it changed?" instead of downloading again. |
+| Template | An HTML file with placeholders that the server fills in before sending it. |
+| HTMX | A small script that lets a page replace parts of itself with HTML from the server. |
+| Session cookie | A random id the server gives my browser after login, sent back with every request. |
+| CSRF | An attack where another website makes my browser send a request with my cookie. |
+| Tunnel | An outgoing connection from my server to a provider, through which visitors' requests come back in. No open port needed. |
+| CSP | Content Security Policy: a header that tells the browser which scripts and styles it may load. |
 
 ## 5. The four traps
 
