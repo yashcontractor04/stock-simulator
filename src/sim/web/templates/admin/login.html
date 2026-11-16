@@ -1,0 +1,20 @@
+{# Admin login. Frontend, built by Fable.
+   Context: error (message or none), locked (true after too many attempts). #}
+{% extends "base.html" %}
+{% set admin_page = true %}
+{% block title %}Log in · Stock Allocation Simulator{% endblock %}
+{% block path %}~/simulator/admin/login{% endblock %}
+{% block content %}
+<div class="stack">
+  <h1>Admin</h1>
+  <p class="lead">Only for the owner of this site.</p>
+</div>
+{% if error %}<p class="note warn" role="alert">{{ error }}</p>{% endif %}
+<form class="stack" method="post" action="/admin/login">
+  <div class="field">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus {% if locked %}disabled{% endif %}>
+  </div>
+  <button class="button" type="submit" {% if locked %}disabled{% endif %}>Log in</button>
+</form>
+{% endblock %}

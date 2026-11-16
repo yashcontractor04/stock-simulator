@@ -1,0 +1,95 @@
+{# Pieces shared by the dashboard and the result page. Frontend, built by Fable.
+   Each macro takes data in the exact shape of the JSON API (docs/openapi.yaml). #}
+
+{% macro value_chart_figure(series, portfolio_label, benchmark_label, summary) %}
+{% set c = value_chart(series) %}
+<figure class="chart">
+  <div class="chart-meta">
+    <span>{{ c.max | money }}</span>
+    <span class="legend">
+      <span><i></i>{{ portfolio_label }}</span>
+      <span><i class="muted"></i>{{ benchmark_label }}</span>
+    </span>
+  </div>
+  <svg viewBox="0 0 1000 300" preserveAspectRatio="none" role="img" aria-label="{{ summary }}">
+    <polyline class="line bench" points="{{ c.benchmark }}"/>
+    <polyline class="line" points="{{ c.portfolio }}"/>
+  </svg>
+  <div class="chart-meta">
+    <span>{{ c.min | money }}</span>
+    <span>{{ c.start | day }} → {{ c.end | day }}</span>
+  </div>
+</figure>
+{% endmacro %}
+
+{% macro fan_chart_figure(outlook) %}
+{% set c = fan_chart(outlook) %}
+<figure class="chart">
+  <div class="chart-meta">
+    <span>{{ c.max | money }}</span>
+    <span class="legend">
+      <span><i></i>middle path</span>
+      <span><i class="box"></i>50 of 100 paths</span>
+      <span><i class="box wide"></i>90 of 100 paths</span>
+    </span>
+  </div>
+  <svg viewBox="0 0 1000 300" preserveAspectRatio="none" role="img"
+       aria-label="Fan chart. After {{ outlook.horizon_years }} years, 5 of 100 simulated paths end below {{ outlook.p5[-1] | money }}, the middle path ends at {{ outlook.p50[-1] | money }}, and 5 of 100 end above {{ outlook.p95[-1] | money }}.">
+    <polygon class="band-wide" points="{{ c.wide }}"/>
+    <polygon class="band-mid" points="{{ c.mid }}"/>
+    <polyline class="line" points="{{ c.median }}"/>
+  </svg>
+  <div class="chart-meta">
+    <span>{{ c.min | money }}</span>
+    <span>today → {{ outlook.horizon_years }} years</span>
+  </div>
+</figure>
+<dl class="stats three">
+  <div><dt>Worst 5% end below</dt><dd>{{ outlook.p5[-1] | money }}</dd></div>
+  <div><dt>Middle path</dt><dd>{{ outlook.p50[-1] | money }}</dd></div>
+  <div><dt>Best 5% end above</dt><dd>{{ outlook.p95[-1] | money }}</dd></div>
+</dl>
+<p class="prose">Not a forecast. {{ "{:,}".format(outlook.paths) }} possible futures were built by reshuffling this
+  portfolio's past daily returns. The bands show where most of them ended. This cannot show
+  events that never happened in the data, and in a crash stocks tend to fall together more
+  than their history suggests.</p>
+{% endmacro %}
+
+{% macro allocation_section(allocation, show_amount=false) %}
+<svg class="alloc-bar" viewBox="0 0 1000 8" preserveAspectRatio="none" aria-hidden="true">
+  {% for bar in allocation_bar(allocation) %}
+  <rect class="{{ bar.role }}" x="{{ bar.x }}" y="0" width="{{ bar.width }}" height="8"/>
+  {% endfor %}
+</svg>
+<div class="table-wrap">
+  <table>
+    <thead class="sr-only">
+      <tr>
+        <th scope="col">Ticker</th><th scope="col">Name</th><th scope="col">Sector</th>
+        <th scope="col">Weight</th>{% if show_amount %}<th scope="col">Amount</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in allocation %}
+      <tr>
+        <th scope="row">{{ a.ticker }}</th>
+        <td class="name">{{ a.name }}</td>
+        <td class="name hide-sm">{{ a.sector }} · {{ "core" if a.role == "core" else "pick" }}</td>
+        <td class="num">{{ a.weight | share }}</td>
+        {% if show_amount %}<td class="num">{{ a.amount | money }}</td>{% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{% macro warnings_list(warnings) %}
+{% if warnings %}
+<ul class="stack-sm prose">
+  {% for w in warnings %}
+  <li><span class="label">{{ "warning" if w.severity == "warning" else "note" }}</span> {{ w.message }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endmacro %}

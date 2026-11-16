@@ -1,0 +1,53 @@
+{# What this is, how it works, its limits. Frontend, built by Fable. No context needed. #}
+{% extends "base.html" %}
+{% block title %}About · Stock Allocation Simulator{% endblock %}
+{% block path %}~/simulator/about{% endblock %}
+{% block content %}
+<div class="stack">
+  <h1>How it works</h1>
+  <p class="lead">A student project about backend engineering. The finance is simple on purpose.</p>
+</div>
+
+<div class="stack">
+  <h2>What it does</h2>
+  <p class="prose">You give it an amount, a risk level and a time span. It starts from a list of
+    large US companies, keeps the industries you chose, drops companies with negative earnings or
+    extreme debt, ranks the rest and keeps a handful. Most of the money goes into broad funds, the
+    rest into those picks. Then it replays history day by day and compares the result with simply
+    buying the S&amp;P 500.</p>
+  <p class="prose">The three portfolios on the dashboard are a <strong>forward test</strong>: they
+    were fixed on their start date and are only valued since. They cannot be tuned afterwards to
+    look good.</p>
+</div>
+
+<div class="stack">
+  <h2>What it cannot tell you</h2>
+  <ul class="stack-sm prose">
+    <li><strong>It only knows today's companies.</strong> Firms that went bankrupt are missing, so past results look better than they would have been.</li>
+    <li><strong>The range of outcomes is not a forecast.</strong> It reshuffles past returns. It cannot show a crisis that is not in the data.</li>
+    <li><strong>Trading costs and taxes are ignored.</strong></li>
+    <li><strong>The rules are a simple baseline,</strong> not a way to beat the market.</li>
+  </ul>
+</div>
+
+<div class="stack">
+  <h2>Under the hood</h2>
+  <p class="prose">A Python backend (FastAPI), a job queue in Postgres and a worker. The database
+    is limited to 2 GB of memory on purpose. Pressing "Run simulation" only orders the work; a
+    worker does it in the background and the page shows the result when it is ready. The server
+    has no open ports: this site reaches you through an outbound tunnel.</p>
+  <p class="prose">Source code, design notes and measured benchmarks are on
+    <a href="https://github.com/yashcontractor04/stock-simulator" rel="noopener">GitHub</a>.</p>
+</div>
+
+<div class="stack">
+  <h2>Privacy</h2>
+  <p class="prose">No accounts, no cookies for visitors, no tracking, no third-party scripts or
+    fonts. To limit abuse, a scrambled form of your IP address is kept in memory for up to a day.
+    It is never stored in a database or a log.</p>
+  {# TODO (roadmap 6.5): Impressum and the note about Cloudflare, before the public address goes live. #}
+</div>
+
+<p class="note">This is a simulation for learning purposes. No real money is invested. Nothing here
+  is financial advice.</p>
+{% endblock %}

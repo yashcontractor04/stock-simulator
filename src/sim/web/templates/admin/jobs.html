@@ -1,0 +1,41 @@
+{# Admin: the job queue. Frontend, built by Fable.
+   Context: jobs (list of Job from GET /v1/admin/jobs), kinds (job kinds I may start), csrf_token.
+   The table refreshes itself every 5 seconds through HTMX. #}
+{% extends "base.html" %}
+{% set admin_page = true %}
+{% block title %}Jobs · Admin{% endblock %}
+{% block path %}~/simulator/admin/jobs{% endblock %}
+{% block content %}
+<div class="stack">
+  <h1>Jobs</h1>
+  <form method="post" action="/admin/jobs" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="sr-only" for="kind">Job to start</label>
+    <select id="kind" name="kind">
+      {% for kind in kinds %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}
+    </select>
+    <button class="button quiet" type="submit">Start job</button>
+  </form>
+</div>
+
+<div id="jobs" class="table-wrap" hx-get="/admin/jobs" hx-trigger="every 5s" hx-select="#jobs" hx-swap="outerHTML">
+  <table>
+    <thead>
+      <tr><th scope="col">Job</th><th scope="col">Status</th><th scope="col">Tries</th><th scope="col">Created</th><th scope="col">Message</th></tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <th scope="row">{{ job.kind }}<br><span class="mute small">{{ job.id[:8] }}</span></th>
+        <td class="mono status-{{ job.status }}">{{ job.status }}{% if job.status == "running" %} {{ job.progress | share }}{% endif %}</td>
+        <td class="mono">{{ job.attempts }}/{{ job.max_attempts }}</td>
+        <td class="mono small">{{ job.created_at | moment }}</td>
+        <td class="name">{{ job.error.message if job.error else (job.message or "") }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="name">No jobs yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

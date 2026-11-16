@@ -1,0 +1,65 @@
+{# The frame around every page. Frontend, built by Fable.
+   Every page gets: nav (which menu entry is current), admin (true when logged in),
+   sample (true while the pages show sample data), and csrf_token on admin pages. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Stock Allocation Simulator{% endblock %}</title>
+  <meta name="description" content="{% block description %}Pick an amount, a risk level and a time span. The simulator builds a portfolio of US stocks and ETFs and compares it with the S&P 500. A simulation, not financial advice.{% endblock %}">
+  {% if admin_page | default(false) %}<meta name="robots" content="noindex">{% endif %}
+  {% if csrf_token | default(none) %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false}'>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/js/htmx-2.0.11.min.js" defer></script>
+  <script src="/static/js/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="bar">
+    <a class="brand" href="/">Stock Allocation Simulator</a>
+    <nav aria-label="Main">
+      <a href="/" {% if nav == "dashboard" %}aria-current="page"{% endif %}>Dashboard</a>
+      <a href="/simulate" {% if nav == "simulate" %}aria-current="page"{% endif %}>Run a simulation</a>
+      <a href="/about" {% if nav == "about" %}aria-current="page"{% endif %}>About</a>
+    </nav>
+    {% if admin | default(false) %}
+    <div class="right">
+      <nav aria-label="Admin">
+        <a href="/admin" {% if nav == "admin-status" %}aria-current="page"{% endif %}>Data</a>
+        <a href="/admin/jobs" {% if nav == "admin-jobs" %}aria-current="page"{% endif %}>Jobs</a>
+        <a href="/admin/settings" {% if nav == "admin-settings" %}aria-current="page"{% endif %}>Settings</a>
+      </nav>
+      <form method="post" action="/admin/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="linklike" type="submit">Log out</button>
+      </form>
+    </div>
+    {% endif %}
+  </header>
+
+  <main id="main" class="page">
+    <section class="window">
+      <div class="window-chrome" aria-hidden="true">
+        <div class="lights"><span></span><span></span><span></span></div>
+        <span class="mono small mute">{% block path %}~/simulator{% endblock %}</span>
+      </div>
+      <div class="window-body">
+        {% if sample | default(false) %}
+        <p class="badge">SAMPLE DATA · the backend is still being built</p>
+        {% endif %}
+        {% block content %}{% endblock %}
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>A simulation for learning purposes. No real money is invested. Not financial advice.</span>
+    <a href="/about">How it works</a>
+    <a href="https://github.com/yashcontractor04/stock-simulator" rel="noopener">Source on GitHub</a>
+  </footer>
+</body>
+</html>

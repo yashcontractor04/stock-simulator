@@ -1,0 +1,101 @@
+{# The part of the result page that changes. Frontend, built by Fable.
+   While the job waits or runs, HTMX fetches this piece again every 2 seconds and
+   replaces itself with the answer. A finished piece has no hx-get, so polling stops.
+   Context: simulation. Used inside simulation.html and returned alone by
+   GET /simulations/{id}/status. #}
+{% import "_parts.html" as parts %}
+{% if simulation.status in ["queued", "running"] %}
+<div id="status" class="progress" role="status"
+     hx-get="/simulations/{{ simulation.id }}/status" hx-trigger="every 2s" hx-swap="outerHTML">
+  <p class="progress-line"><span class="dot"></span>
+    {% if simulation.status == "queued" %}In the queue, waiting for the worker{% else %}Running: picking, weighting, backtesting{% endif %}
+  </p>
+  <progress max="1" value="{{ simulation.progress }}">{{ simulation.progress | share }}</progress>
+  <noscript><p class="hint">This page does not refresh by itself without JavaScript. <a href="/simulations/{{ simulation.id }}">Reload</a> in a few seconds.</p></noscript>
+</div>
+
+{% elif simulation.status == "succeeded" %}
+{% set r = simulation.result %}
+{% set m = r.metrics.portfolio %}
+{% set b = r.metrics.benchmark %}
+{% set bench = simulation.params.benchmark %}
+<div id="status" class="stack" role="status">
+  <div class="tiles">
+    <div class="tile"><span class="value">{{ m.final_value | money }}</span><span class="name">Final value</span></div>
+    <div class="tile"><span class="value {{ m.total_return | tone }}">{{ m.total_return | pct }}</span><span class="name">Total return</span></div>
+    <div class="tile"><span class="value">{{ m.cagr | pct }}</span><span class="name">Growth per year</span></div>
+    <div class="tile"><span class="value">{{ b.cagr | pct }}</span><span class="name">{{ bench }} growth per year</span></div>
+  </div>
+</div>
+
+<div class="stack">
+  <h2>Performance, {{ r.period.start | day }} to {{ r.period.end | day }}</h2>
+  {{ parts.value_chart_figure(r.series, "Portfolio", bench,
+     "Line chart. The portfolio grew to " ~ (m.final_value | money) ~ ", " ~ bench ~ " to " ~ (b.final_value | money) ~ ".") }}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th scope="col"></th><th scope="col" class="num">Portfolio</th><th scope="col" class="num">{{ bench }}</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">Final value</th><td class="num">{{ m.final_value | money }}</td><td class="num">{{ b.final_value | money }}</td></tr>
+        <tr><th scope="row">Growth per year</th><td class="num">{{ m.cagr | pct }}</td><td class="num">{{ b.cagr | pct }}</td></tr>
+        <tr><th scope="row">Volatility per year</th><td class="num">{{ m.volatility | share(1) }}</td><td class="num">{{ b.volatility | share(1) }}</td></tr>
+        <tr><th scope="row">Largest fall</th><td class="num">{{ m.max_drawdown | pct }}</td><td class="num">{{ b.max_drawdown | pct }}</td></tr>
+        <tr><th scope="row">Sharpe ratio</th><td class="num">{{ m.sharpe | number }}</td><td class="num">{{ b.sharpe | number }}</td></tr>
+        <tr><th scope="row">Bad day (5 in 100 are worse)</th><td class="num">{{ m.value_at_risk_95 | pct }}</td><td class="num">{{ b.value_at_risk_95 | pct }}</td></tr>
+        <tr><th scope="row">Average of those bad days</th><td class="num">{{ m.expected_shortfall_95 | pct }}</td><td class="num">{{ b.expected_shortfall_95 | pct }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="stack">
+  <h2>Allocation</h2>
+  {{ parts.allocation_section(r.allocation, show_amount=true) }}
+  {{ parts.warnings_list(r.warnings) }}
+</div>
+
+{% if r.yearly_returns %}
+<div class="stack">
+  <h2>Year by year</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Year</th><th scope="col" class="num">Portfolio</th><th scope="col" class="num">{{ bench }}</th></tr></thead>
+      <tbody>
+        {% for y in r.yearly_returns %}
+        <tr><th scope="row">{{ y.year }}</th><td class="num {{ y.portfolio | tone }}">{{ y.portfolio | pct }}</td><td class="num {{ y.benchmark | tone }}">{{ y.benchmark | pct }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="stack">
+  <h2>Range of outcomes, next {{ r.outlook.horizon_years }} years</h2>
+  {{ parts.fan_chart_figure(r.outlook) }}
+</div>
+
+<div class="stack">
+  <p class="mono small mute">Reproducible: seed {{ r.reproducibility.seed }} · data version {{ r.reproducibility.data_version }}
+    · prices as of {{ r.reproducibility.prices_as_of | day }} · code {{ r.reproducibility.code_version }}</p>
+  <div class="inline">
+    <a class="button" href="/simulate">Run another</a>
+    <span class="hint">This address can be shared. It shows the same result to everyone.</span>
+  </div>
+  <p class="note">This is a simulation for learning purposes. Trading costs and taxes are ignored.
+    Past performance says little about the future. Not financial advice.</p>
+</div>
+
+{% else %}
+<div id="status" class="stack" role="status">
+  <p class="note warn">
+    {% if simulation.status == "cancelled" %}This simulation was cancelled.
+    {% else %}{{ simulation.error.message if simulation.error else "The simulation failed." }}{% endif %}
+  </p>
+  <div class="inline">
+    <a class="button" href="/simulate">{{ "Try again" if simulation.error and simulation.error.retryable else "Change the inputs" }}</a>
+  </div>
+</div>
+{% endif %}

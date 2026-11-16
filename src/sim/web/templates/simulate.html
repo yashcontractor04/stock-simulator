@@ -1,0 +1,90 @@
+{# The "run your own simulation" form. Frontend, built by Fable.
+   Context: options (GET /v1/meta/options), values (what to pre-fill), errors (field -> message),
+   enabled (false when I switched public simulations off), idempotency_key (random, per page load). #}
+{% extends "base.html" %}
+{% block title %}Run a simulation · Stock Allocation Simulator{% endblock %}
+{% block path %}~/simulator/simulate{% endblock %}
+{% block content %}
+<div class="stack">
+  <h1>Run your own simulation</h1>
+  <p class="lead">Choose an amount, how much risk you accept and how far to look back. The
+    simulator picks US stocks and ETFs with simple rules and shows how that portfolio would
+    have done against the S&amp;P 500.</p>
+</div>
+
+{% if not enabled %}
+<p class="note warn" role="status">New simulations are switched off at the moment. The dashboard
+  and earlier results still work. Please come back later.</p>
+{% endif %}
+{% if errors.get("_form") %}
+<p class="note warn" role="alert">{{ errors["_form"] }}</p>
+{% endif %}
+
+<form class="stack" method="post" action="/simulate" novalidate>
+  <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+
+  <div class="field">
+    <label for="capital">Amount in US dollars</label>
+    <input id="capital" name="capital" type="number" inputmode="decimal" required
+           min="{{ options.capital.min }}" max="{{ options.capital.max }}" step="100"
+           value="{{ values.capital }}"
+           {% if errors.get("capital") %}aria-invalid="true" aria-describedby="capital-error"{% endif %}>
+    {% if errors.get("capital") %}<p class="error" id="capital-error">{{ errors["capital"] }}</p>{% endif %}
+  </div>
+
+  <fieldset>
+    <legend>Risk level</legend>
+    <div class="cards">
+      {% for level in options.risk_levels %}
+      <label class="card">
+        <input type="radio" name="risk_level" value="{{ level.id }}" {% if values.risk_level == level.id %}checked{% endif %}>
+        <span>{{ risk_names[level.id] }}</span>
+        <span class="row mute">
+          <span>aims for {{ level.target_volatility | share }} swings a year</span>
+          <span>{{ level.core_share | share }} in broad funds</span>
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+    {% if errors.get("risk_level") %}<p class="error">{{ errors["risk_level"] }}</p>{% endif %}
+  </fieldset>
+
+  <div class="field">
+    <label for="time_span_years">Time span in years</label>
+    <input id="time_span_years" name="time_span_years" type="number" inputmode="numeric" required
+           min="{{ options.time_span_years.min }}" max="{{ options.time_span_years.max }}" step="1"
+           value="{{ values.time_span_years }}" aria-describedby="years-hint{% if errors.get('time_span_years') %} years-error{% endif %}"
+           {% if errors.get("time_span_years") %}aria-invalid="true"{% endif %}>
+    <p class="hint" id="years-hint">How far the backtest looks back, {{ options.time_span_years.min }} to {{ options.time_span_years.max }} years.</p>
+    {% if errors.get("time_span_years") %}<p class="error" id="years-error">{{ errors["time_span_years"] }}</p>{% endif %}
+  </div>
+
+  <fieldset>
+    <legend>Industries <span class="mute">(optional, up to 5)</span></legend>
+    <div class="chips">
+      {% for item in options.industries %}
+      <label class="chip"><input type="checkbox" name="industries" value="{{ item.id }}" {% if item.id in values.industries %}checked{% endif %}>{{ item.name }}</label>
+      {% endfor %}
+    </div>
+    <p class="hint">Leave empty to pick from all industries.</p>
+    {% if errors.get("industries") %}<p class="error">{{ errors["industries"] }}</p>{% endif %}
+  </fieldset>
+
+  <fieldset>
+    <legend>Themes <span class="mute">(optional)</span></legend>
+    <div class="chips">
+      {% for item in options.themes %}
+      <label class="chip"><input type="checkbox" name="themes" value="{{ item.id }}" {% if item.id in values.themes %}checked{% endif %}>{{ item.name }}</label>
+      {% endfor %}
+    </div>
+    {% if errors.get("themes") %}<p class="error">{{ errors["themes"] }}</p>{% endif %}
+  </fieldset>
+
+  <div class="stack">
+    <button class="button" type="submit" {% if not enabled %}disabled{% endif %}>Run simulation</button>
+    <p class="hint">Takes a few seconds. Prices as of {{ options.prices_as_of | day }}. Compared with {{ options.default_benchmark }}.</p>
+  </div>
+</form>
+
+<p class="note">This is a simulation for learning purposes. Not financial advice.</p>
+{% endblock %}

@@ -1,0 +1,44 @@
+{# Admin: the few things I can change without a deploy. Frontend, built by Fable.
+   Context: settings (Settings from GET /v1/admin/settings), errors (field -> message),
+   saved (true right after a successful save), csrf_token. #}
+{% extends "base.html" %}
+{% set admin_page = true %}
+{% block title %}Settings · Admin{% endblock %}
+{% block path %}~/simulator/admin/settings{% endblock %}
+{% block content %}
+<div class="stack">
+  <h1>Settings</h1>
+  <p class="lead">Limits for visitors. They apply within a few seconds, without a restart.</p>
+</div>
+{% if saved %}<p class="note" role="status">Saved.</p>{% endif %}
+
+<form class="stack" method="post" action="/admin/settings">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <fieldset>
+    <legend>Public simulations</legend>
+    <div class="chips">
+      <label class="chip"><input type="radio" name="public_simulations_enabled" value="true" {% if settings.public_simulations_enabled %}checked{% endif %}>On</label>
+      <label class="chip"><input type="radio" name="public_simulations_enabled" value="false" {% if not settings.public_simulations_enabled %}checked{% endif %}>Off</label>
+    </div>
+    <p class="hint">The emergency switch. Off: the form shows a notice, the dashboard and old results still work.</p>
+  </fieldset>
+
+  {% for name, label, hint in [
+    ("simulations_per_ip_per_10_minutes", "Simulations per visitor in 10 minutes", ""),
+    ("simulations_per_ip_per_day", "Simulations per visitor per day", ""),
+    ("max_queued_simulations", "Simulations allowed to wait at once", "More than this and new ones are refused until the queue is shorter."),
+    ("requests_per_ip_per_minute", "Requests per visitor per minute", "Raise this for a load test, then set it back."),
+  ] %}
+  <div class="field">
+    <label for="{{ name }}">{{ label }}</label>
+    <input id="{{ name }}" name="{{ name }}" type="number" inputmode="numeric" min="1" step="1" required value="{{ settings[name] }}"
+           {% if errors.get(name) %}aria-invalid="true"{% endif %}>
+    {% if hint %}<p class="hint">{{ hint }}</p>{% endif %}
+    {% if errors.get(name) %}<p class="error">{{ errors[name] }}</p>{% endif %}
+  </div>
+  {% endfor %}
+
+  <button class="button" type="submit">Save</button>
+</form>
+{% endblock %}

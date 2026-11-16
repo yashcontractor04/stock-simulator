@@ -1,0 +1,60 @@
+{# Admin start page: is the data fresh, is the system healthy? Frontend, built by Fable.
+   Context: status (AdminStatus from GET /v1/admin/status), csrf_token. #}
+{% extends "base.html" %}
+{% set admin_page = true %}
+{% block title %}Data · Admin{% endblock %}
+{% block path %}~/simulator/admin{% endblock %}
+{% block content %}
+<div class="stack">
+  <h1>Data status</h1>
+  <p class="mono small mute">Prices as of {{ status.prices_as_of | day }} · data version {{ status.data_version }}</p>
+</div>
+
+<div class="tiles">
+  <div class="tile"><span class="value">{{ "{:,}".format(status.instruments.total) }}</span><span class="name">Instruments ({{ status.instruments.stocks }} stocks, {{ status.instruments.etfs }} ETFs)</span></div>
+  <div class="tile"><span class="value">{{ "%.1f" | format(status.price_rows / 1000000) }}M</span><span class="name">Price rows</span></div>
+  <div class="tile"><span class="value">{{ "{:,}".format(status.database_size_mb) }} MB</span><span class="name">Database size</span></div>
+  <div class="tile"><span class="value {{ 'neg' if status.instruments.stale else '' }}">{{ status.instruments.stale }}</span><span class="name">Instruments behind</span></div>
+</div>
+
+<div class="stack">
+  <h2>Last 24 hours</h2>
+  <dl class="stats">
+    <div><dt>Simulations</dt><dd>{{ status.simulations_last_24h }}</dd></div>
+    <div><dt>Waiting / running</dt><dd>{{ status.queue.queued }} / {{ status.queue.running }}</dd></div>
+    <div><dt>Failed jobs</dt><dd class="{{ 'neg' if status.queue.failed_last_24h else '' }}">{{ status.queue.failed_last_24h }}</dd></div>
+    <div><dt>Requests refused (rate limit)</dt><dd>{{ status.rate_limited_last_24h }}</dd></div>
+  </dl>
+</div>
+
+<div class="stack">
+  <h2>Last run of each job</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Job</th><th scope="col">Status</th><th scope="col">Finished</th><th scope="col">Message</th></tr></thead>
+      <tbody>
+        {% for run in status.last_runs %}
+        <tr>
+          <th scope="row">{{ run.kind }}</th>
+          <td class="mono status-{{ run.status }}">{{ run.status }}</td>
+          <td class="mono small">{{ run.finished_at | moment }}</td>
+          <td class="name">{{ run.message or "" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if status.stale_tickers %}
+<div class="stack">
+  <h2>Behind the last trading day</h2>
+  <p class="mono small">{{ status.stale_tickers | join(" · ") }}</p>
+  <form method="post" action="/admin/jobs" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="kind" value="ingest_prices">
+    <button class="button quiet small" type="submit">Fetch missing prices</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,16 @@
+{# One simulation: progress, then the result. Frontend, built by Fable.
+   Context: simulation (Simulation from GET /v1/simulations/{id}). #}
+{% extends "base.html" %}
+{% block title %}Simulation · Stock Allocation Simulator{% endblock %}
+{% block path %}~/simulator/simulations/{{ simulation.id[:8] }}{% endblock %}
+{% block content %}
+{% set q = simulation.params %}
+<div class="stack">
+  <h1>{{ q.capital | money }}, {{ risk_names[q.risk_level] | lower }}, {{ q.time_span_years }} {{ "year" if q.time_span_years == 1 else "years" }}</h1>
+  <p class="mono small mute">
+    {% if q.industries %}{{ q.industries | join(", ") }}{% else %}all industries{% endif %}{% if q.themes %} · {{ q.themes | join(", ") }}{% endif %}
+    · {{ q.strategy }} · rebalanced {{ q.rebalance }} · vs. {{ q.benchmark }}
+  </p>
+</div>
+{% include "_simulation_status.html" %}
+{% endblock %}

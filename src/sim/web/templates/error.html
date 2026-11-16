@@ -1,0 +1,15 @@
+{# One plain page for every error. Frontend, built by Fable.
+   Context: status_code, title, detail, retry_after (seconds or none).
+   Never pass exception text or internal addresses as detail. #}
+{% extends "base.html" %}
+{% block title %}{{ title }} · Stock Allocation Simulator{% endblock %}
+{% block path %}~/simulator/{{ status_code }}{% endblock %}
+{% block content %}
+<div class="stack">
+  <p class="label">{{ status_code }}</p>
+  <h1>{{ title }}</h1>
+  <p class="lead">{{ detail }}</p>
+  {% if retry_after %}<p class="mono small mute">Try again in {{ retry_after }} seconds.</p>{% endif %}
+  <div class="inline"><a class="button" href="/">Back to the dashboard</a></div>
+</div>
+{% endblock %}

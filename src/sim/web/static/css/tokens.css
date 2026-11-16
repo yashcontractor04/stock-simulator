@@ -1,0 +1,42 @@
+/*
+ * Design tokens: the single place where colours, radii and fonts are defined.
+ * Copied from my portfolio site (web/src/styles/tokens.css) so both look the same.
+ * Direction "Ledger": pure black, white type, big tabular numbers, mono for data.
+ * Other CSS must use these variables, never raw colour values.
+ */
+:root {
+  /* surfaces, darkest to lightest */
+  --bg: #000000;
+  --panel: #0b0b0c;
+  --tile: #111113;
+  --line: #1f1f23;
+  --line-strong: #3a3a42;
+
+  /* text */
+  --text: #ffffff;
+  --mute: #a1a1aa;
+
+  /* reserved meanings: gain / loss only, never decoration */
+  --positive: #34d399;
+  --negative: #f87171;
+
+  /* macOS window chrome */
+  --light-close: #ff5f57;
+  --light-min: #febc2e;
+  --light-max: #28c840;
+
+  /* the one accent of this app (the portfolio's teal hue) */
+  --accent: #2dd4bf;
+
+  /* shape */
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 18px;
+
+  /* type */
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  /* focus ring */
+  --ring: #ffffff;
+}

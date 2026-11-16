@@ -1,0 +1,71 @@
+{# Public dashboard: the three model portfolios. Frontend, built by Fable.
+   Context: snapshot (Snapshot from GET /v1/snapshot/latest, or none), selected (risk level). #}
+{% extends "base.html" %}
+{% import "_parts.html" as parts %}
+{% block path %}~/simulator/dashboard{% endblock %}
+{% block content %}
+<div class="stack">
+  <h1>Three portfolios, one benchmark</h1>
+  {% if snapshot %}
+  <p class="lead">Picked by the simulator's rules and started with {{ snapshot.start_value | money }} each
+    on {{ snapshot.started_on | day }}. They are not changed by hand and are valued after every
+    trading day, next to simply buying the S&amp;P 500 ({{ snapshot.benchmark.ticker }}).</p>
+  {% else %}
+  <p class="lead">The model portfolios have not started yet. The first numbers appear here once
+    the simulator has built its first daily snapshot.</p>
+  {% endif %}
+</div>
+
+{% if snapshot %}
+{% set bench = snapshot.benchmark.ticker %}
+<nav class="cards" aria-label="Model portfolios">
+  {% for p in snapshot.portfolios %}
+  <a class="card" href="/?risk={{ p.risk_level }}#detail"
+     hx-get="/?risk={{ p.risk_level }}" hx-target="#main" hx-select="#main" hx-swap="outerHTML" hx-push-url="true"
+     {% if p.risk_level == selected %}aria-current="true"{% endif %}>
+    <span class="mute small">{{ risk_names[p.risk_level] }}</span>
+    <span class="big">{{ p.value | money }}</span>
+    <span class="row">
+      <span class="{{ p.total_return | tone }}">{{ p.total_return | pct }}</span>
+      <span class="mute">{{ bench }} {{ p.benchmark_return | pct }}</span>
+    </span>
+  </a>
+  {% endfor %}
+</nav>
+
+{% set p = snapshot.portfolios | selectattr("risk_level", "equalto", selected) | first %}
+<div id="detail" class="stack">
+  <h2>Performance</h2>
+  {{ parts.value_chart_figure(p.series, risk_names[p.risk_level], bench,
+     "Line chart. The portfolio is now worth " ~ (p.value | money) ~ ", " ~ (p.total_return | pct) ~ " since the start. " ~ bench ~ ": " ~ (p.benchmark_return | pct) ~ ".") }}
+  <dl class="stats">
+    <div><dt>Last trading day</dt><dd class="{{ p.day_change | tone }}">{{ p.day_change | pct }}</dd></div>
+    <div><dt>Volatility per year</dt><dd>{{ p.volatility | share }}</dd></div>
+    <div><dt>Largest fall</dt><dd class="{{ p.max_drawdown | tone }}">{{ p.max_drawdown | pct }}</dd></div>
+    <div><dt>Sharpe ratio</dt><dd>{{ p.sharpe | number }}</dd></div>
+  </dl>
+</div>
+
+<div class="stack">
+  <h2>Allocation</h2>
+  {{ parts.allocation_section(p.allocation) }}
+  {{ parts.warnings_list(p.warnings) }}
+</div>
+
+<div class="stack">
+  <h2>Range of outcomes, next {{ p.outlook.horizon_years }} years</h2>
+  {{ parts.fan_chart_figure(p.outlook) }}
+</div>
+
+<div class="stack">
+  <p class="mono small mute">Prices as of {{ snapshot.as_of | day }} · {{ p.value | money2 }}</p>
+  <div class="inline">
+    <a class="button" href="/simulate">Run your own simulation</a>
+  </div>
+  <p class="note">This is a simulation for learning purposes. No real money is invested. Past
+    performance says little about the future. Not financial advice.</p>
+</div>
+{% else %}
+<p class="note">This is a simulation for learning purposes. Not financial advice.</p>
+{% endif %}
+{% endblock %}
