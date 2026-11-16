@@ -70,14 +70,15 @@ headers.
 - [ ] Before the public address goes live: decide on Impressum and privacy notice.
 - [ ] Start at roadmap step 1.1 after the foundations phase.
 
-### Open: the portfolio repo
+### The portfolio repo
 
-Nothing in this repo depends on it any more. But `yashcontractor04/portfolio` still has
-**pull request #1** (branch `stock-sim-frontend`) from the earlier plan: a Dashboard tab on
-sample data, a Supabase migration for a snapshot table, an adapter skeleton, and docs that
-describe the old setup. It was left untouched on Yash's instruction. It no longer matches
-this plan and should be closed or reworked, not merged as it is. In particular, do not
-apply its migration. Yash decides what happens there.
+Nothing in this repo depends on it. For the record: `yashcontractor04/portfolio` had pull
+request #1 (branch `stock-sim-frontend`) from the earlier plan: a Dashboard tab on sample
+data, a Supabase migration for a snapshot table and an adapter skeleton. It was **closed
+without merging on 2026-11-16**. The branch still exists, in case pieces are reused for the
+later "link and summary card" item. Its migration must not be applied. The portfolio's
+`main` still describes the simulator as a runner inside the portfolio worker; that text is
+out of date and is Yash's to change when he gets to it.
 
 ### Open: things an assistant could still improve
 
