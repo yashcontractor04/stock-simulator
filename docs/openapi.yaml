@@ -1,0 +1,1369 @@
+openapi: 3.1.0
+info:
+  title: Stock Allocation Simulator API
+  version: 0.1.0
+  summary: Internal API of the stock allocation simulator.
+  description: |
+    This is the contract between the simulator and its only caller in v1: the adapter in
+    my portfolio website's worker. It is written before the code. A CI test compares it
+    with the schema that FastAPI generates, so the two cannot drift apart.
+
+    The API is not reachable from the internet. It listens only inside a private Docker
+    network. Every request still needs a bearer token.
+
+    Not financial advice. All numbers come from a simulation on historical data.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://sim-api:8000
+    description: Inside the private Docker network (production)
+  - url: http://localhost:8000
+    description: Local development
+tags:
+  - name: health
+    description: Is the service alive? No token needed.
+  - name: meta
+    description: The choices a form can offer.
+  - name: simulations
+    description: Order a simulation and fetch its result.
+  - name: model-portfolios
+    description: The three live model portfolios and the daily snapshot.
+  - name: instruments
+    description: Stocks and ETFs the simulator knows, and their prices.
+  - name: admin
+    description: Only with the admin token. Used by the CLI and, later, admin pages.
+security:
+  - serviceToken: []
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: The process is running.
+      security: []
+      responses:
+        "200":
+          description: Alive.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+              example: { status: ok, version: 0.1.0 }
+
+  /readyz:
+    get:
+      tags: [health]
+      operationId: getReady
+      summary: The process can reach the database.
+      security: []
+      responses:
+        "200":
+          description: Ready to take requests.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ready" }
+              example:
+                status: ok
+                database: ok
+                data_version: 412
+                prices_as_of: "2026-11-13"
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/meta/options:
+    get:
+      tags: [meta]
+      operationId: getOptions
+      summary: Everything a form needs, risk levels, industries, themes and limits.
+      description: Changes rarely. Safe to cache for an hour.
+      responses:
+        "200":
+          description: The current options.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CacheControl" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            RateLimit-Limit: { $ref: "#/components/headers/RateLimitLimit" }
+            RateLimit-Remaining: { $ref: "#/components/headers/RateLimitRemaining" }
+            RateLimit-Reset: { $ref: "#/components/headers/RateLimitReset" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Options" }
+              example:
+                risk_levels:
+                  - id: low
+                    target_volatility: 0.08
+                    max_weight_per_instrument: 0.25
+                    max_weight_per_sector: 0.30
+                    core_share: 0.80
+                  - id: medium
+                    target_volatility: 0.14
+                    max_weight_per_instrument: 0.15
+                    max_weight_per_sector: 0.35
+                    core_share: 0.50
+                  - id: high
+                    target_volatility: 0.22
+                    max_weight_per_instrument: 0.12
+                    max_weight_per_sector: 0.45
+                    core_share: 0.20
+                industries:
+                  - { id: healthcare, name: Healthcare }
+                  - { id: technology, name: Technology }
+                  - { id: defense, name: Defense }
+                  - { id: energy, name: Energy }
+                  - { id: financials, name: Financials }
+                  - { id: consumer, name: Consumer }
+                  - { id: industrials, name: Industrials }
+                themes:
+                  - { id: ai, name: Artificial intelligence }
+                  - { id: clean-energy, name: Clean energy }
+                strategies:
+                  - { id: equal-weight, name: Equal weight }
+                  - { id: inverse-volatility, name: Inverse volatility }
+                  - { id: minimum-variance, name: Minimum variance }
+                rebalance: [never, yearly, quarterly]
+                benchmarks: [SPY, VTI, VT]
+                default_benchmark: SPY
+                capital: { min: 100, max: 10000000, currency: USD }
+                time_span_years: { min: 1, max: 20 }
+                prices_as_of: "2026-11-13"
+        "304": { $ref: "#/components/responses/NotModified" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/simulations:
+    post:
+      tags: [simulations]
+      operationId: createSimulation
+      summary: Order a simulation.
+      description: |
+        Does not run the simulation. It puts a job in the queue and answers at once.
+
+        Two ways a request does not create new work:
+        - The same `Idempotency-Key` was used before: the first simulation is returned.
+        - The same inputs were already simulated on the same data (`data_version`) with
+          the same seed: the stored simulation is returned.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SimulationParams" }
+            examples:
+              medium:
+                summary: Medium risk, two industries, ten years
+                value:
+                  capital: 10000
+                  risk_level: medium
+                  time_span_years: 10
+                  industries: [healthcare, technology]
+                  themes: []
+              minimal:
+                summary: Only the required fields
+                value:
+                  capital: 5000
+                  risk_level: low
+                  time_span_years: 5
+      responses:
+        "202":
+          description: Accepted. Ask again at the Location address.
+          headers:
+            Location:
+              description: Where to fetch the simulation.
+              schema: { type: string, examples: ["/v1/simulations/0193b6f4-5a3c-7e21-9c4d-2f8a6b1e7d05"] }
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+            RateLimit-Limit: { $ref: "#/components/headers/RateLimitLimit" }
+            RateLimit-Remaining: { $ref: "#/components/headers/RateLimitRemaining" }
+            RateLimit-Reset: { $ref: "#/components/headers/RateLimitReset" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Simulation" }
+              example:
+                id: 0193b6f4-5a3c-7e21-9c4d-2f8a6b1e7d05
+                status: queued
+                params:
+                  capital: 10000
+                  risk_level: medium
+                  time_span_years: 10
+                  industries: [healthcare, technology]
+                  themes: []
+                  strategy: inverse-volatility
+                  rebalance: yearly
+                  benchmark: SPY
+                  seed: 20261116
+                created_at: "2026-11-16T09:12:04Z"
+                started_at: null
+                finished_at: null
+                progress: 0
+                result: null
+                error: null
+        "200":
+          description: This simulation already exists. Nothing new was queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Simulation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: The Idempotency-Key was used before with different inputs.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: https://github.com/yashcontractor04/stock-simulator/blob/main/docs/04-api.md#idempotency-conflict
+                title: Idempotency key reused
+                status: 409
+                code: idempotency_conflict
+                detail: This Idempotency-Key belongs to a simulation with different inputs.
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/simulations/{simulation_id}:
+    parameters:
+      - $ref: "#/components/parameters/SimulationId"
+    get:
+      tags: [simulations]
+      operationId: getSimulation
+      summary: Status of a simulation, and the result once it is ready.
+      description: |
+        While the status is `queued` or `running`, the answer has a `Retry-After` header
+        and must not be cached. A finished simulation never changes, so it is sent with an
+        `ETag` and a long `Cache-Control`.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The simulation.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            Cache-Control: { $ref: "#/components/headers/CacheControl" }
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Simulation" }
+              examples:
+                running:
+                  summary: Still working
+                  value:
+                    id: 0193b6f4-5a3c-7e21-9c4d-2f8a6b1e7d05
+                    status: running
+                    params:
+                      capital: 10000
+                      risk_level: medium
+                      time_span_years: 10
+                      industries: [healthcare, technology]
+                      themes: []
+                      strategy: inverse-volatility
+                      rebalance: yearly
+                      benchmark: SPY
+                      seed: 20261116
+                    created_at: "2026-11-16T09:12:04Z"
+                    started_at: "2026-11-16T09:12:05Z"
+                    finished_at: null
+                    progress: 0.6
+                    result: null
+                    error: null
+                succeeded:
+                  summary: Finished
+                  value:
+                    id: 0193b6f4-5a3c-7e21-9c4d-2f8a6b1e7d05
+                    status: succeeded
+                    params:
+                      capital: 10000
+                      risk_level: medium
+                      time_span_years: 10
+                      industries: [healthcare, technology]
+                      themes: []
+                      strategy: inverse-volatility
+                      rebalance: yearly
+                      benchmark: SPY
+                      seed: 20261116
+                    created_at: "2026-11-16T09:12:04Z"
+                    started_at: "2026-11-16T09:12:05Z"
+                    finished_at: "2026-11-16T09:12:11Z"
+                    progress: 1
+                    result:
+                      period: { start: "2016-11-14", end: "2026-11-13" }
+                      allocation:
+                        - { ticker: SPY, name: SPDR S&P 500 ETF Trust, kind: etf, sector: Broad market, role: core, weight: 0.30, amount: 3000.00 }
+                        - { ticker: BND, name: Vanguard Total Bond Market ETF, kind: etf, sector: Bonds, role: core, weight: 0.20, amount: 2000.00 }
+                        - { ticker: JNJ, name: Johnson & Johnson, kind: stock, sector: Healthcare, role: satellite, weight: 0.09, amount: 900.00 }
+                        - { ticker: MSFT, name: Microsoft Corporation, kind: stock, sector: Technology, role: satellite, weight: 0.08, amount: 800.00 }
+                        - { ticker: ABBV, name: AbbVie Inc., kind: stock, sector: Healthcare, role: satellite, weight: 0.07, amount: 700.00 }
+                        - { ticker: AAPL, name: Apple Inc., kind: stock, sector: Technology, role: satellite, weight: 0.07, amount: 700.00 }
+                        - { ticker: UNH, name: UnitedHealth Group Incorporated, kind: stock, sector: Healthcare, role: satellite, weight: 0.07, amount: 700.00 }
+                        - { ticker: ORCL, name: Oracle Corporation, kind: stock, sector: Technology, role: satellite, weight: 0.06, amount: 600.00 }
+                        - { ticker: MRK, name: "Merck & Co., Inc.", kind: stock, sector: Healthcare, role: satellite, weight: 0.06, amount: 600.00 }
+                      metrics:
+                        portfolio:
+                          final_value: 28140.55
+                          total_return: 1.8141
+                          cagr: 0.1090
+                          volatility: 0.1362
+                          sharpe: 0.67
+                          max_drawdown: -0.2214
+                          value_at_risk_95: -0.0131
+                          expected_shortfall_95: -0.0203
+                        benchmark:
+                          final_value: 33480.10
+                          total_return: 2.3480
+                          cagr: 0.1284
+                          volatility: 0.1771
+                          sharpe: 0.62
+                          max_drawdown: -0.3372
+                          value_at_risk_95: -0.0172
+                          expected_shortfall_95: -0.0268
+                      series:
+                        dates: ["2016-11-14", "2018-11-12", "2020-03-23", "2020-11-16", "2022-11-14", "2024-11-11", "2026-11-13"]
+                        portfolio: [10000.00, 12110.40, 11020.75, 15230.10, 17480.60, 23390.25, 28140.55]
+                        benchmark: [10000.00, 12870.30, 10650.20, 17510.85, 19960.40, 28730.90, 33480.10]
+                      yearly_returns:
+                        - { year: 2022, portfolio: -0.1012, benchmark: -0.1817 }
+                        - { year: 2023, portfolio: 0.1586, benchmark: 0.2618 }
+                        - { year: 2024, portfolio: 0.1731, benchmark: 0.2489 }
+                        - { year: 2025, portfolio: 0.1207, benchmark: 0.1642 }
+                      outlook:
+                        method: block-bootstrap
+                        paths: 1000
+                        horizon_years: 10
+                        months: [0, 24, 48, 72, 96, 120]
+                        p5: [28140.55, 26210.00, 28930.00, 32480.00, 37010.00, 42350.00]
+                        p25: [28140.55, 31020.00, 37440.00, 45110.00, 54300.00, 65210.00]
+                        p50: [28140.55, 34550.00, 42610.00, 52480.00, 64570.00, 79320.00]
+                        p75: [28140.55, 38390.00, 48620.00, 61350.00, 77240.00, 97110.00]
+                        p95: [28140.55, 44610.00, 59330.00, 78020.00, 101900.00, 132400.00]
+                        note: Built by resampling past returns. It cannot show events that never happened in the data.
+                      warnings:
+                        - code: sector_concentration
+                          severity: info
+                          message: Healthcare is 29% of the portfolio, close to the 35% limit for this risk level.
+                        - code: etf_overlap
+                          severity: info
+                          message: MSFT and AAPL are also large holdings of SPY, so their real weight is higher than shown.
+                        - code: survivorship_bias
+                          severity: warning
+                          message: The stock universe contains only companies that exist today. Past results look better than they would have been.
+                      reproducibility:
+                        seed: 20261116
+                        data_version: 412
+                        prices_as_of: "2026-11-13"
+                        code_version: 3f9c2ab
+                        strategy: inverse-volatility
+                        picker: quality-filter
+                    error: null
+                failed:
+                  summary: Failed
+                  value:
+                    id: 0193b6f4-5a3c-7e21-9c4d-2f8a6b1e7d05
+                    status: failed
+                    params:
+                      capital: 10000
+                      risk_level: high
+                      time_span_years: 10
+                      industries: [defense]
+                      themes: []
+                      strategy: equal-weight
+                      rebalance: yearly
+                      benchmark: SPY
+                      seed: 20261116
+                    created_at: "2026-11-16T09:12:04Z"
+                    started_at: "2026-11-16T09:12:05Z"
+                    finished_at: "2026-11-16T09:12:06Z"
+                    progress: 0.2
+                    result: null
+                    error:
+                      code: universe_too_small
+                      message: Only 3 companies passed the filters. At least 5 are needed. Try adding an industry.
+                      retryable: false
+        "304": { $ref: "#/components/responses/NotModified" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+    delete:
+      tags: [simulations]
+      operationId: cancelSimulation
+      summary: Cancel a simulation that has not finished.
+      description: A running job stops at its next heartbeat. Cancelling a finished simulation does nothing.
+      responses:
+        "200":
+          description: The simulation after the cancel request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Simulation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/model-portfolios:
+    get:
+      tags: [model-portfolios]
+      operationId: listModelPortfolios
+      summary: The three live model portfolios, without their long series.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: One entry per risk level.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            Cache-Control: { $ref: "#/components/headers/CacheControl" }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [as_of, items]
+                properties:
+                  as_of: { type: string, format: date }
+                  items:
+                    type: array
+                    maxItems: 3
+                    items: { $ref: "#/components/schemas/ModelPortfolioSummary" }
+              example:
+                as_of: "2026-11-13"
+                items:
+                  - { risk_level: low, started_on: "2026-03-02", start_value: 10000, value: 10412.30, total_return: 0.0412, benchmark_return: 0.0731, day_change: 0.0011 }
+                  - { risk_level: medium, started_on: "2026-03-02", start_value: 10000, value: 10688.45, total_return: 0.0688, benchmark_return: 0.0731, day_change: 0.0024 }
+                  - { risk_level: high, started_on: "2026-03-02", start_value: 10000, value: 10951.80, total_return: 0.0952, benchmark_return: 0.0731, day_change: 0.0047 }
+        "304": { $ref: "#/components/responses/NotModified" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/snapshot/latest:
+    get:
+      tags: [model-portfolios]
+      operationId: getLatestSnapshot
+      summary: The daily snapshot, exactly as it is copied to Supabase.
+      description: |
+        This is the shape the public dashboard on my website reads. The `export_snapshot`
+        job builds it once a day after the model portfolios are updated and writes it into
+        the public table `sim_snapshots` in Supabase (column `payload`).
+
+        It is small on purpose: at most 400 points per series and at most 25 positions per
+        portfolio, so the whole thing stays under 256 KB.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The latest snapshot.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            Cache-Control: { $ref: "#/components/headers/CacheControl" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Snapshot" }
+              example:
+                schema_version: 1
+                as_of: "2026-11-13"
+                generated_at: "2026-11-14T02:10:31Z"
+                started_on: "2026-03-02"
+                start_value: 10000
+                currency: USD
+                benchmark: { ticker: SPY, name: SPDR S&P 500 ETF Trust }
+                portfolios:
+                  - risk_level: low
+                    value: 10412.30
+                    total_return: 0.0412
+                    benchmark_return: 0.0731
+                    day_change: 0.0011
+                    volatility: 0.0694
+                    max_drawdown: -0.0388
+                    sharpe: 0.31
+                    series:
+                      dates: ["2026-03-02", "2026-04-30", "2026-06-30", "2026-08-31", "2026-10-30", "2026-11-13"]
+                      portfolio: [10000.00, 9921.40, 10105.75, 10240.10, 10366.90, 10412.30]
+                      benchmark: [10000.00, 9760.20, 10210.55, 10480.35, 10655.80, 10731.00]
+                    allocation:
+                      - { ticker: SPY, name: SPDR S&P 500 ETF Trust, kind: etf, sector: Broad market, role: core, weight: 0.35 }
+                      - { ticker: BND, name: Vanguard Total Bond Market ETF, kind: etf, sector: Bonds, role: core, weight: 0.30 }
+                      - { ticker: USMV, name: iShares MSCI USA Min Vol Factor ETF, kind: etf, sector: Broad market, role: core, weight: 0.15 }
+                      - { ticker: JNJ, name: Johnson & Johnson, kind: stock, sector: Healthcare, role: satellite, weight: 0.05 }
+                      - { ticker: PG, name: The Procter & Gamble Company, kind: stock, sector: Consumer, role: satellite, weight: 0.05 }
+                      - { ticker: KO, name: The Coca-Cola Company, kind: stock, sector: Consumer, role: satellite, weight: 0.05 }
+                      - { ticker: MRK, name: "Merck & Co., Inc.", kind: stock, sector: Healthcare, role: satellite, weight: 0.05 }
+                    outlook:
+                      method: block-bootstrap
+                      paths: 1000
+                      horizon_years: 5
+                      months: [0, 12, 24, 36, 48, 60]
+                      p5: [10412.30, 9890.00, 10020.00, 10310.00, 10690.00, 11120.00]
+                      p25: [10412.30, 10560.00, 11010.00, 11540.00, 12130.00, 12760.00]
+                      p50: [10412.30, 11010.00, 11660.00, 12350.00, 13080.00, 13850.00]
+                      p75: [10412.30, 11470.00, 12330.00, 13210.00, 14120.00, 15060.00]
+                      p95: [10412.30, 12150.00, 13340.00, 14530.00, 15760.00, 17040.00]
+                      note: Built by resampling past returns. It cannot show events that never happened in the data.
+                    warnings: []
+                  - risk_level: medium
+                    value: 10688.45
+                    total_return: 0.0688
+                    benchmark_return: 0.0731
+                    day_change: 0.0024
+                    volatility: 0.1218
+                    max_drawdown: -0.0672
+                    sharpe: 0.42
+                    series:
+                      dates: ["2026-03-02", "2026-04-30", "2026-06-30", "2026-08-31", "2026-10-30", "2026-11-13"]
+                      portfolio: [10000.00, 9805.60, 10190.30, 10455.20, 10610.75, 10688.45]
+                      benchmark: [10000.00, 9760.20, 10210.55, 10480.35, 10655.80, 10731.00]
+                    allocation:
+                      - { ticker: SPY, name: SPDR S&P 500 ETF Trust, kind: etf, sector: Broad market, role: core, weight: 0.30 }
+                      - { ticker: BND, name: Vanguard Total Bond Market ETF, kind: etf, sector: Bonds, role: core, weight: 0.20 }
+                      - { ticker: MSFT, name: Microsoft Corporation, kind: stock, sector: Technology, role: satellite, weight: 0.09 }
+                      - { ticker: JNJ, name: Johnson & Johnson, kind: stock, sector: Healthcare, role: satellite, weight: 0.08 }
+                      - { ticker: AAPL, name: Apple Inc., kind: stock, sector: Technology, role: satellite, weight: 0.07 }
+                      - { ticker: JPM, name: JPMorgan Chase & Co., kind: stock, sector: Financials, role: satellite, weight: 0.07 }
+                      - { ticker: XOM, name: Exxon Mobil Corporation, kind: stock, sector: Energy, role: satellite, weight: 0.07 }
+                      - { ticker: LMT, name: Lockheed Martin Corporation, kind: stock, sector: Defense, role: satellite, weight: 0.06 }
+                      - { ticker: UNH, name: UnitedHealth Group Incorporated, kind: stock, sector: Healthcare, role: satellite, weight: 0.06 }
+                    outlook:
+                      method: block-bootstrap
+                      paths: 1000
+                      horizon_years: 5
+                      months: [0, 12, 24, 36, 48, 60]
+                      p5: [10688.45, 9310.00, 9480.00, 9900.00, 10450.00, 11080.00]
+                      p25: [10688.45, 10720.00, 11450.00, 12300.00, 13270.00, 14330.00]
+                      p50: [10688.45, 11620.00, 12700.00, 13880.00, 15170.00, 16580.00]
+                      p75: [10688.45, 12560.00, 14060.00, 15640.00, 17360.00, 19240.00]
+                      p95: [10688.45, 14010.00, 16230.00, 18570.00, 21140.00, 23990.00]
+                      note: Built by resampling past returns. It cannot show events that never happened in the data.
+                    warnings:
+                      - code: etf_overlap
+                        severity: info
+                        message: MSFT and AAPL are also large holdings of SPY, so their real weight is higher than shown.
+                  - risk_level: high
+                    value: 10951.80
+                    total_return: 0.0952
+                    benchmark_return: 0.0731
+                    day_change: 0.0047
+                    volatility: 0.1986
+                    max_drawdown: -0.1124
+                    sharpe: 0.39
+                    series:
+                      dates: ["2026-03-02", "2026-04-30", "2026-06-30", "2026-08-31", "2026-10-30", "2026-11-13"]
+                      portfolio: [10000.00, 9480.25, 10310.60, 10790.40, 10822.15, 10951.80]
+                      benchmark: [10000.00, 9760.20, 10210.55, 10480.35, 10655.80, 10731.00]
+                    allocation:
+                      - { ticker: SPY, name: SPDR S&P 500 ETF Trust, kind: etf, sector: Broad market, role: core, weight: 0.20 }
+                      - { ticker: NVDA, name: NVIDIA Corporation, kind: stock, sector: Technology, role: satellite, weight: 0.12 }
+                      - { ticker: MSFT, name: Microsoft Corporation, kind: stock, sector: Technology, role: satellite, weight: 0.11 }
+                      - { ticker: AVGO, name: Broadcom Inc., kind: stock, sector: Technology, role: satellite, weight: 0.10 }
+                      - { ticker: LLY, name: Eli Lilly and Company, kind: stock, sector: Healthcare, role: satellite, weight: 0.10 }
+                      - { ticker: JPM, name: JPMorgan Chase & Co., kind: stock, sector: Financials, role: satellite, weight: 0.10 }
+                      - { ticker: RTX, name: RTX Corporation, kind: stock, sector: Defense, role: satellite, weight: 0.09 }
+                      - { ticker: CAT, name: Caterpillar Inc., kind: stock, sector: Industrials, role: satellite, weight: 0.09 }
+                      - { ticker: XOM, name: Exxon Mobil Corporation, kind: stock, sector: Energy, role: satellite, weight: 0.09 }
+                    outlook:
+                      method: block-bootstrap
+                      paths: 1000
+                      horizon_years: 5
+                      months: [0, 12, 24, 36, 48, 60]
+                      p5: [10951.80, 8420.00, 8510.00, 8960.00, 9620.00, 10410.00]
+                      p25: [10951.80, 10690.00, 11560.00, 12720.00, 14060.00, 15570.00]
+                      p50: [10951.80, 12180.00, 13810.00, 15640.00, 17710.00, 20050.00]
+                      p75: [10951.80, 13800.00, 16390.00, 19210.00, 22430.00, 26120.00]
+                      p95: [10951.80, 16440.00, 20880.00, 25730.00, 31400.00, 38060.00]
+                      note: Built by resampling past returns. It cannot show events that never happened in the data.
+                    warnings:
+                      - code: sector_concentration
+                        severity: warning
+                        message: Technology is 33% of the portfolio.
+                notes:
+                  - Forward test. The portfolios were fixed on the start date and are valued every trading day.
+                  - Not financial advice.
+        "304": { $ref: "#/components/responses/NotModified" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/instruments:
+    get:
+      tags: [instruments]
+      operationId: listInstruments
+      summary: Search the stocks and ETFs the simulator knows.
+      parameters:
+        - name: q
+          in: query
+          description: Start of a ticker or part of a name.
+          schema: { type: string, minLength: 1, maxLength: 40 }
+        - name: kind
+          in: query
+          schema: { $ref: "#/components/schemas/InstrumentKind" }
+        - name: sector
+          in: query
+          schema: { type: string, maxLength: 40 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: cursor
+          in: query
+          description: The `next_cursor` of the previous page. Pages are ordered by ticker.
+          schema: { type: string, maxLength: 20 }
+      responses:
+        "200":
+          description: One page of instruments.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CacheControl" }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: "#/components/schemas/Instrument" }
+                  next_cursor: { type: [string, "null"] }
+              example:
+                items:
+                  - { ticker: MRK, name: "Merck & Co., Inc.", kind: stock, sector: Healthcare, sic: "2834", first_price_date: "2006-01-03", last_price_date: "2026-11-13" }
+                  - { ticker: MSFT, name: Microsoft Corporation, kind: stock, sector: Technology, sic: "7372", first_price_date: "2006-01-03", last_price_date: "2026-11-13" }
+                next_cursor: MSFT
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/instruments/{ticker}/prices:
+    get:
+      tags: [instruments]
+      operationId: getPrices
+      summary: Daily prices of one instrument.
+      description: |
+        The endpoint many callers hit for the same few popular tickers, so it is the main
+        place for caching work. The `ETag` is built from the ticker, the date range and the
+        `data_version`. When new data is ingested, `data_version` goes up and old cache
+        entries stop matching. That is the whole invalidation rule.
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Ticker" }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: adjusted
+          in: query
+          description: If true, `close` is adjusted for splits and dividends (total return).
+          schema: { type: boolean, default: true }
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Prices, oldest first. At most 5,300 rows (about 21 years).
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            Cache-Control: { $ref: "#/components/headers/CacheControl" }
+            RateLimit-Limit: { $ref: "#/components/headers/RateLimitLimit" }
+            RateLimit-Remaining: { $ref: "#/components/headers/RateLimitRemaining" }
+            RateLimit-Reset: { $ref: "#/components/headers/RateLimitReset" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceSeries" }
+              example:
+                ticker: MSFT
+                adjusted: true
+                data_version: 412
+                dates: ["2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13"]
+                close: [512.40, 515.85, 509.10, 518.30, 521.75]
+                volume: [18250300, 16980100, 21440900, 17810600, 16230400]
+        "304": { $ref: "#/components/responses/NotModified" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/admin/jobs:
+    post:
+      tags: [admin]
+      operationId: createAdminJob
+      summary: Queue an admin job, ingest data, update model portfolios or export the snapshot.
+      security:
+        - adminToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminJobRequest" }
+            examples:
+              prices:
+                summary: Fetch missing prices since a date
+                value: { kind: ingest_prices, args: { since: "2026-11-01", provider: tiingo } }
+              snapshot:
+                summary: Build and publish today's snapshot
+                value: { kind: export_snapshot, args: {} }
+      responses:
+        "202":
+          description: Queued.
+          headers:
+            Location:
+              description: Where to fetch the job.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+              example:
+                id: 0193b701-2c4e-7a10-8f3b-6d1e9a4c2b77
+                kind: ingest_prices
+                status: queued
+                args: { since: "2026-11-01", provider: tiingo }
+                attempts: 0
+                max_attempts: 5
+                created_at: "2026-11-16T21:00:00Z"
+                started_at: null
+                finished_at: null
+                progress: 0
+                message: null
+                error: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    get:
+      tags: [admin]
+      operationId: listAdminJobs
+      summary: Look at the queue.
+      security:
+        - adminToken: []
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/JobStatus" }
+        - name: kind
+          in: query
+          schema: { $ref: "#/components/schemas/JobKind" }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        "200":
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: "#/components/schemas/Job" }
+              example:
+                items:
+                  - id: 0193b701-2c4e-7a10-8f3b-6d1e9a4c2b77
+                    kind: ingest_prices
+                    status: running
+                    args: { since: "2026-11-01", provider: tiingo }
+                    attempts: 1
+                    max_attempts: 5
+                    created_at: "2026-11-16T21:00:00Z"
+                    started_at: "2026-11-16T21:00:01Z"
+                    finished_at: null
+                    progress: 0.34
+                    message: 172 of 506 tickers done, waiting for the hourly rate limit
+                    error: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/jobs/{job_id}:
+    get:
+      tags: [admin]
+      operationId: getAdminJob
+      summary: One job.
+      security:
+        - adminToken: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /metrics:
+    get:
+      tags: [admin]
+      operationId: getMetrics
+      summary: Numbers about the service in Prometheus text format.
+      security:
+        - adminToken: []
+      responses:
+        "200":
+          description: Counters and histograms.
+          content:
+            text/plain:
+              schema: { type: string }
+              example: |
+                http_requests_total{route="/v1/simulations/{simulation_id}",method="GET",status="200"} 1841
+                http_request_duration_seconds_bucket{route="/v1/instruments/{ticker}/prices",le="0.1"} 912
+                jobs_queue_length{kind="simulation"} 2
+                cache_hits_total{cache="simulation_result"} 310
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    serviceToken:
+      type: http
+      scheme: bearer
+      description: SIM_SERVICE_TOKEN. Held by the portfolio adapter.
+    adminToken:
+      type: http
+      scheme: bearer
+      description: SIM_ADMIN_TOKEN. Held by me. Also accepted wherever the service token is.
+
+  parameters:
+    SimulationId:
+      name: simulation_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Any unique text chosen by the caller, for example the portfolio's job id. Sending
+        the same key again returns the first answer instead of creating a second job.
+      schema: { type: string, minLength: 8, maxLength: 100 }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: The ETag of the copy the caller already has. If it still matches, the answer is 304 with no body.
+      schema: { type: string, maxLength: 100 }
+
+  headers:
+    ETag:
+      description: A fingerprint of the response body.
+      schema: { type: string, examples: ['"sim-0193b6f4-v412"'] }
+    CacheControl:
+      description: |
+        How long the answer may be reused. Finished simulations: `private, max-age=86400, immutable`.
+        Options and instruments: `private, max-age=3600`. Prices and snapshot: `private, max-age=300`.
+        Unfinished simulations: `no-store`.
+      schema: { type: string, examples: ["private, max-age=300"] }
+    RetryAfter:
+      description: Seconds to wait before asking again.
+      schema: { type: integer, minimum: 1, examples: [2] }
+    RateLimitLimit:
+      description: Requests allowed per minute for this token.
+      schema: { type: integer, examples: [120] }
+    RateLimitRemaining:
+      description: Requests left in the current minute.
+      schema: { type: integer, examples: [117] }
+    RateLimitReset:
+      description: Seconds until the limit resets.
+      schema: { type: integer, examples: [41] }
+
+  responses:
+    NotModified:
+      description: The caller's copy is still current. No body.
+    Unauthorized:
+      description: The bearer token is missing or wrong.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example: { type: about:blank, title: Unauthorized, status: 401, code: unauthorized, detail: Missing or invalid bearer token. }
+    Forbidden:
+      description: The token is valid but not the admin token.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example: { type: about:blank, title: Forbidden, status: 403, code: forbidden, detail: This endpoint needs the admin token. }
+    NotFound:
+      description: No such thing.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example: { type: about:blank, title: Not found, status: 404, code: not_found, detail: No simulation with this id. }
+    ValidationFailed:
+      description: The input broke a rule in this contract.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: about:blank
+            title: Validation failed
+            status: 422
+            code: validation_failed
+            detail: 1 field is invalid.
+            errors:
+              - { field: time_span_years, message: must be between 1 and 20 }
+    TooManyRequests:
+      description: The rate limit for this token is used up.
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        RateLimit-Limit: { $ref: "#/components/headers/RateLimitLimit" }
+        RateLimit-Remaining: { $ref: "#/components/headers/RateLimitRemaining" }
+        RateLimit-Reset: { $ref: "#/components/headers/RateLimitReset" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example: { type: about:blank, title: Too many requests, status: 429, code: rate_limited, detail: Limit of 120 requests per minute reached. Try again in 41 seconds. }
+    Unavailable:
+      description: The database cannot be reached, or the queue is full. Try again later.
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example: { type: about:blank, title: Service unavailable, status: 503, code: queue_full, detail: 50 simulations are already waiting. Try again in a minute. }
+
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, version]
+      properties:
+        status: { type: string, const: ok }
+        version: { type: string }
+
+    Ready:
+      type: object
+      additionalProperties: false
+      required: [status, database, data_version, prices_as_of]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        database: { type: string, enum: [ok, down] }
+        data_version: { type: [integer, "null"], description: Goes up by one with every ingestion run that changed data. }
+        prices_as_of: { type: [string, "null"], format: date, description: The last trading day with prices. }
+
+    Problem:
+      type: object
+      description: Error format, RFC 9457 "problem details", plus a stable machine-readable `code`.
+      additionalProperties: false
+      required: [type, title, status, code]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        code:
+          type: string
+          enum: [unauthorized, forbidden, not_found, validation_failed, idempotency_conflict, rate_limited, queue_full, database_unavailable, internal_error]
+        detail: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, message]
+            properties:
+              field: { type: string }
+              message: { type: string }
+
+    Ticker:
+      type: string
+      pattern: "^[A-Z0-9.\\-]{1,12}$"
+      examples: [MSFT]
+
+    RiskLevel:
+      type: string
+      enum: [low, medium, high]
+
+    InstrumentKind:
+      type: string
+      enum: [stock, etf]
+
+    JobStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled]
+
+    JobKind:
+      type: string
+      enum: [simulation, ingest_prices, ingest_fundamentals, update_model_portfolios, export_snapshot, admin_command]
+
+    NamedId:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: { type: string, pattern: "^[a-z0-9-]{1,40}$" }
+        name: { type: string, maxLength: 60 }
+
+    Options:
+      type: object
+      additionalProperties: false
+      required: [risk_levels, industries, themes, strategies, rebalance, benchmarks, default_benchmark, capital, time_span_years, prices_as_of]
+      properties:
+        risk_levels:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, target_volatility, max_weight_per_instrument, max_weight_per_sector, core_share]
+            properties:
+              id: { $ref: "#/components/schemas/RiskLevel" }
+              target_volatility: { type: number, description: Yearly volatility the portfolio aims for, as a fraction. }
+              max_weight_per_instrument: { type: number }
+              max_weight_per_sector: { type: number }
+              core_share: { type: number, description: Share of the money that goes into broad ETFs (the core). }
+        industries: { type: array, items: { $ref: "#/components/schemas/NamedId" } }
+        themes: { type: array, items: { $ref: "#/components/schemas/NamedId" } }
+        strategies: { type: array, items: { $ref: "#/components/schemas/NamedId" } }
+        rebalance: { type: array, items: { type: string } }
+        benchmarks: { type: array, items: { $ref: "#/components/schemas/Ticker" } }
+        default_benchmark: { $ref: "#/components/schemas/Ticker" }
+        capital:
+          type: object
+          additionalProperties: false
+          required: [min, max, currency]
+          properties:
+            min: { type: number }
+            max: { type: number }
+            currency: { type: string, const: USD }
+        time_span_years:
+          type: object
+          additionalProperties: false
+          required: [min, max]
+          properties:
+            min: { type: integer }
+            max: { type: integer }
+        prices_as_of: { type: [string, "null"], format: date }
+
+    SimulationParams:
+      type: object
+      description: |
+        The inputs. Only the first three are required. The rest have defaults that depend
+        on the risk level; the answer always shows the values that were really used.
+      additionalProperties: false
+      required: [capital, risk_level, time_span_years]
+      properties:
+        capital:
+          type: number
+          minimum: 100
+          maximum: 10000000
+          description: Starting money in USD.
+        risk_level: { $ref: "#/components/schemas/RiskLevel" }
+        time_span_years:
+          type: integer
+          minimum: 1
+          maximum: 20
+          description: |
+            How many years the backtest looks back from the last trading day. The outlook
+            looks the same number of years forward, at most 10.
+        industries:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          default: []
+          description: Ids from /v1/meta/options. Empty means all industries.
+          items: { type: string, pattern: "^[a-z0-9-]{1,40}$" }
+        themes:
+          type: array
+          maxItems: 3
+          uniqueItems: true
+          default: []
+          items: { type: string, pattern: "^[a-z0-9-]{1,40}$" }
+        strategy:
+          type: string
+          pattern: "^[a-z0-9-]{1,40}$"
+          description: Weighting plugin id. Default, low and medium use inverse-volatility, high uses equal-weight.
+        rebalance:
+          type: string
+          enum: [never, yearly, quarterly]
+          default: yearly
+        benchmark:
+          allOf: [{ $ref: "#/components/schemas/Ticker" }]
+          default: SPY
+        seed:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: Seed for the random numbers of the outlook. Default, the date of the last trading day as a number (20261113).
+
+    Simulation:
+      type: object
+      additionalProperties: false
+      required: [id, status, params, created_at, started_at, finished_at, progress, result, error]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        params: { $ref: "#/components/schemas/SimulationParams" }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        progress: { type: number, minimum: 0, maximum: 1 }
+        result:
+          oneOf:
+            - { $ref: "#/components/schemas/SimulationResult" }
+            - { type: "null" }
+        error:
+          oneOf:
+            - { $ref: "#/components/schemas/JobError" }
+            - { type: "null" }
+
+    JobError:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+          enum: [universe_too_small, not_enough_history, unknown_industry, unknown_theme, unknown_strategy, optimiser_failed, data_unavailable, timeout, internal_error]
+        message: { type: string, maxLength: 300 }
+        retryable: { type: boolean, description: True if trying again later can work, for example the data was not loaded yet. }
+
+    SimulationResult:
+      type: object
+      additionalProperties: false
+      required: [period, allocation, metrics, series, yearly_returns, outlook, warnings, reproducibility]
+      properties:
+        period:
+          type: object
+          additionalProperties: false
+          required: [start, end]
+          properties:
+            start: { type: string, format: date }
+            end: { type: string, format: date }
+        allocation:
+          type: array
+          minItems: 1
+          maxItems: 40
+          items: { $ref: "#/components/schemas/Position" }
+        metrics:
+          type: object
+          additionalProperties: false
+          required: [portfolio, benchmark]
+          properties:
+            portfolio: { $ref: "#/components/schemas/Metrics" }
+            benchmark: { $ref: "#/components/schemas/Metrics" }
+        series: { $ref: "#/components/schemas/ValueSeries" }
+        yearly_returns:
+          type: array
+          maxItems: 21
+          items:
+            type: object
+            additionalProperties: false
+            required: [year, portfolio, benchmark]
+            properties:
+              year: { type: integer }
+              portfolio: { type: number }
+              benchmark: { type: number }
+        outlook: { $ref: "#/components/schemas/Outlook" }
+        warnings:
+          type: array
+          maxItems: 10
+          items: { $ref: "#/components/schemas/Warning" }
+        reproducibility:
+          type: object
+          description: Everything needed to get the same result again.
+          additionalProperties: false
+          required: [seed, data_version, prices_as_of, code_version, strategy, picker]
+          properties:
+            seed: { type: integer }
+            data_version: { type: integer }
+            prices_as_of: { type: string, format: date }
+            code_version: { type: string, description: Short git commit of the simulator. }
+            strategy: { type: string }
+            picker: { type: string }
+
+    Position:
+      type: object
+      additionalProperties: false
+      required: [ticker, name, kind, sector, role, weight]
+      properties:
+        ticker: { $ref: "#/components/schemas/Ticker" }
+        name: { type: string, maxLength: 80 }
+        kind: { $ref: "#/components/schemas/InstrumentKind" }
+        sector: { type: string, maxLength: 40 }
+        role: { type: string, enum: [core, satellite], description: core = broad ETF, satellite = picked single stock or theme. }
+        weight: { type: number, minimum: 0, maximum: 1, description: Share of the portfolio. All weights add up to 1. }
+        amount: { type: number, minimum: 0, description: Starting money in this position, in USD. Not in the snapshot. }
+
+    Metrics:
+      type: object
+      description: All returns and risks are fractions, 0.109 means 10.9%.
+      additionalProperties: false
+      required: [final_value, total_return, cagr, volatility, sharpe, max_drawdown, value_at_risk_95, expected_shortfall_95]
+      properties:
+        final_value: { type: number }
+        total_return: { type: number }
+        cagr: { type: number, description: Growth per year. }
+        volatility: { type: number, description: Yearly standard deviation of daily log returns. }
+        sharpe: { type: number }
+        max_drawdown: { type: number, maximum: 0, description: Largest fall from a peak, as a negative fraction. }
+        value_at_risk_95: { type: number, description: One-day loss that was exceeded on only 5% of days. }
+        expected_shortfall_95: { type: number, description: Average loss on those worst 5% of days. }
+
+    ValueSeries:
+      type: object
+      description: |
+        Portfolio and benchmark value over time. Three lists of the same length. Never more
+        than 400 points: longer periods are thinned out (weekly, then monthly), always
+        keeping the first day, the last day, the highest and the lowest point.
+      additionalProperties: false
+      required: [dates, portfolio, benchmark]
+      properties:
+        dates: { type: array, maxItems: 400, items: { type: string, format: date } }
+        portfolio: { type: array, maxItems: 400, items: { type: number } }
+        benchmark: { type: array, maxItems: 400, items: { type: number } }
+
+    Outlook:
+      type: object
+      description: |
+        A range of possible future values, not a forecast. `p5` is the value that 5% of the
+        simulated paths stayed below, `p50` is the middle path, and so on. All lists have
+        the same length as `months`.
+      additionalProperties: false
+      required: [method, paths, horizon_years, months, p5, p25, p50, p75, p95, note]
+      properties:
+        method: { type: string, enum: [block-bootstrap] }
+        paths: { type: integer, minimum: 100, maximum: 10000 }
+        horizon_years: { type: integer, minimum: 1, maximum: 10 }
+        months: { type: array, maxItems: 121, items: { type: integer, minimum: 0 } }
+        p5: { type: array, maxItems: 121, items: { type: number } }
+        p25: { type: array, maxItems: 121, items: { type: number } }
+        p50: { type: array, maxItems: 121, items: { type: number } }
+        p75: { type: array, maxItems: 121, items: { type: number } }
+        p95: { type: array, maxItems: 121, items: { type: number } }
+        note: { type: string, maxLength: 200 }
+
+    Warning:
+      type: object
+      additionalProperties: false
+      required: [code, severity, message]
+      properties:
+        code:
+          type: string
+          enum: [instrument_concentration, sector_concentration, etf_overlap, short_history, survivorship_bias, volatility_off_target]
+        severity: { type: string, enum: [info, warning] }
+        message: { type: string, maxLength: 200 }
+
+    ModelPortfolioSummary:
+      type: object
+      additionalProperties: false
+      required: [risk_level, started_on, start_value, value, total_return, benchmark_return, day_change]
+      properties:
+        risk_level: { $ref: "#/components/schemas/RiskLevel" }
+        started_on: { type: string, format: date }
+        start_value: { type: number }
+        value: { type: number }
+        total_return: { type: number }
+        benchmark_return: { type: number }
+        day_change: { type: number, description: Return of the last trading day. }
+
+    Snapshot:
+      type: object
+      description: |
+        The small daily summary that is copied into Supabase for the public dashboard.
+        `schema_version` goes up when a field is removed or changes meaning. The website
+        refuses versions it does not know and shows the last good one.
+      additionalProperties: false
+      required: [schema_version, as_of, generated_at, started_on, start_value, currency, benchmark, portfolios, notes]
+      properties:
+        schema_version: { type: integer, const: 1 }
+        as_of: { type: string, format: date, description: The trading day the numbers belong to. }
+        generated_at: { type: string, format: date-time }
+        started_on: { type: string, format: date, description: The fixed day all three model portfolios started. }
+        start_value: { type: number }
+        currency: { type: string, const: USD }
+        benchmark:
+          type: object
+          additionalProperties: false
+          required: [ticker, name]
+          properties:
+            ticker: { $ref: "#/components/schemas/Ticker" }
+            name: { type: string, maxLength: 80 }
+        portfolios:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { $ref: "#/components/schemas/SnapshotPortfolio" }
+        notes:
+          type: array
+          maxItems: 5
+          items: { type: string, maxLength: 200 }
+
+    SnapshotPortfolio:
+      type: object
+      additionalProperties: false
+      required: [risk_level, value, total_return, benchmark_return, day_change, volatility, max_drawdown, sharpe, series, allocation, outlook, warnings]
+      properties:
+        risk_level: { $ref: "#/components/schemas/RiskLevel" }
+        value: { type: number }
+        total_return: { type: number }
+        benchmark_return: { type: number }
+        day_change: { type: number }
+        volatility: { type: [number, "null"], description: Null until there are 60 trading days of history. }
+        max_drawdown: { type: number, maximum: 0 }
+        sharpe: { type: [number, "null"] }
+        series: { $ref: "#/components/schemas/ValueSeries" }
+        allocation:
+          type: array
+          minItems: 1
+          maxItems: 25
+          items: { $ref: "#/components/schemas/Position" }
+        outlook: { $ref: "#/components/schemas/Outlook" }
+        warnings:
+          type: array
+          maxItems: 10
+          items: { $ref: "#/components/schemas/Warning" }
+
+    Instrument:
+      type: object
+      additionalProperties: false
+      required: [ticker, name, kind, sector, sic, first_price_date, last_price_date]
+      properties:
+        ticker: { $ref: "#/components/schemas/Ticker" }
+        name: { type: string, maxLength: 80 }
+        kind: { $ref: "#/components/schemas/InstrumentKind" }
+        sector: { type: string, maxLength: 40 }
+        sic: { type: [string, "null"], description: The SEC's 4-digit industry code. ETFs have none. }
+        first_price_date: { type: [string, "null"], format: date }
+        last_price_date: { type: [string, "null"], format: date }
+
+    PriceSeries:
+      type: object
+      additionalProperties: false
+      required: [ticker, adjusted, data_version, dates, close, volume]
+      properties:
+        ticker: { $ref: "#/components/schemas/Ticker" }
+        adjusted: { type: boolean }
+        data_version: { type: integer }
+        dates: { type: array, maxItems: 5300, items: { type: string, format: date } }
+        close: { type: array, maxItems: 5300, items: { type: number } }
+        volume: { type: array, maxItems: 5300, items: { type: integer } }
+
+    AdminJobRequest:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [ingest_prices, ingest_fundamentals, update_model_portfolios, export_snapshot, admin_command]
+        args:
+          type: object
+          description: Depends on the kind. See docs/04-api.md.
+          maxProperties: 10
+          default: {}
+
+    Job:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, args, attempts, max_attempts, created_at, started_at, finished_at, progress, message, error]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/JobKind" }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        args: { type: object }
+        attempts: { type: integer, minimum: 0 }
+        max_attempts: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        progress: { type: number, minimum: 0, maximum: 1 }
+        message: { type: [string, "null"], maxLength: 300 }
+        error:
+          oneOf:
+            - { $ref: "#/components/schemas/JobError" }
+            - { type: "null" }
